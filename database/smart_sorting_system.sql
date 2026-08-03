@@ -22,7 +22,7 @@ CREATE TABLE users (
 -- 4. 제품 유형 테이블 생성
 CREATE TABLE product_types (
     product_type_id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    code VARCHAR(20) NOT NULL UNIQUE,
+    product_type_code VARCHAR(20) NOT NULL UNIQUE,
     product_name VARCHAR(50) NOT NULL,
     unit_per_set INT NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -33,7 +33,7 @@ CREATE TABLE product_types (
 
 -- 5. 제품 유형 초기 데이터
 INSERT INTO product_types (
-    code,
+    product_type_code,
     product_name,
     unit_per_set
 ) VALUES
@@ -43,10 +43,10 @@ INSERT INTO product_types (
 -- 6. 시스템 구성요소 테이블 생성
 CREATE TABLE system_components (
     component_id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    code VARCHAR(30) NOT NULL UNIQUE,
+    component_code VARCHAR(30) NOT NULL UNIQUE,
     component_name VARCHAR(50) NOT NULL,
     component_type VARCHAR(20) NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'NORMAL',
+    current_status VARCHAR(20) NOT NULL DEFAULT 'NORMAL',
     status_updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT chk_system_components_type
@@ -60,7 +60,7 @@ CREATE TABLE system_components (
         )),
 
     CONSTRAINT chk_system_components_status
-        CHECK (status IN (
+        CHECK (current_status IN (
             'NORMAL',
             'WARNING',
             'ERROR',
