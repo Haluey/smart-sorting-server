@@ -131,6 +131,13 @@ CREATE TABLE production_sessions (
     CONSTRAINT chk_production_sessions_target_candy
         CHECK (target_candy_count >= 0),
 
+    -- 초콜릿과 사탕 목표량이 모두 0인 세션 생성 방지
+    CONSTRAINT chk_production_sessions_target
+        CHECK (
+            target_chocolate_set_count > 0
+            OR target_candy_count > 0
+        ),
+
     CONSTRAINT chk_production_sessions_chocolate_count
         CHECK (chocolate_count >= 0),
 
@@ -143,7 +150,21 @@ CREATE TABLE production_sessions (
             'PAUSED',
             'COMPLETED',
             'CANCELLED'
-        ))
+        )),
+
+    -- 진행 중에는 종료 시각이 없고, 완료·취소 시에는 종료 시각 필수
+    CONSTRAINT chk_production_sessions_ended_at
+        CHECK (
+            (
+                status IN ('RUNNING', 'PAUSED')
+                AND ended_at IS NULL
+            )
+            OR
+            (
+                status IN ('COMPLETED', 'CANCELLED')
+                AND ended_at IS NOT NULL
+            )
+        )
 );
 
 -- 9. 제품 감지 및 분류 결과 테이블 생성
@@ -176,7 +197,23 @@ CREATE TABLE product_detections (
         CHECK (classification_status IN (
             'SUCCESS',
             'FAILED'
-        ))
+        )),
+
+    -- 분류 성공 시 제품 유형과 신뢰도 필수,
+    -- 분류 실패 시 제품 유형은 NULL
+    CONSTRAINT chk_product_detections_result
+        CHECK (
+            (
+                classification_status = 'SUCCESS'
+                AND product_type_id IS NOT NULL
+                AND confidence IS NOT NULL
+            )
+            OR
+            (
+                classification_status = 'FAILED'
+                AND product_type_id IS NULL
+            )
+        )
 );
 
 -- 10. 알림 테이블 생성
@@ -270,5 +307,211 @@ CREATE TABLE alerts (
                 AND recovery_status IS NOT NULL
                 AND check_status IS NOT NULL
             )
+        ),
+
+    -- 미복구 상태에는 복구 시각이 없고,
+    -- 복구 완료 상태에는 복구 시각 필수
+    CONSTRAINT chk_alerts_recovery_details
+        CHECK (
+            (
+                recovery_status IS NULL
+                AND recovered_at IS NULL
+            )
+            OR
+            (
+                recovery_status = 'NOT_RECOVERED'
+                AND recovered_at IS NULL
+            )
+            OR
+            (
+                recovery_status = 'RECOVERED'
+                AND recovered_at IS NOT NULL
+            )
+        ),
+
+    -- 미확인 상태에는 확인자와 확인 시각이 없고,
+    -- 확인 완료 상태에는 확인자와 확인 시각 필수
+    CONSTRAINT chk_alerts_check_details
+        CHECK (
+            (
+                check_status IS NULL
+                AND checked_by_user_id IS NULL
+                AND checked_at IS NULL
+            )
+            OR
+            (
+                check_status = 'UNCHECKED'
+                AND checked_by_user_id IS NULL
+                AND checked_at IS NULL
+            )
+            OR
+            (
+                check_status = 'CHECKED'
+                AND checked_by_user_id IS NOT NULL
+                AND checked_at IS NOT NULL
+            )
         )
 );
+
+-- 11. 사용자 더미 데이터
+-- password_hash는 로그인 기능 구현 후 BCrypt 해시값으로 교체
+INSERT INTO users (
+    login_id,
+    password_hash,
+    name,
+    role
+) VALUES
+    ('admin01', 'DUMMY_ADMIN_PASSWORD_HASH', '관리자', 'ADMIN'),
+    ('worker01', 'DUMMY_WORKER_PASSWORD_HASH', '김작업', 'WORKER');
+
+
+-- 12. 생산 세션 더미 데이터
+INSERT INTO production_sessions (
+    user_id,
+    target_chocolate_set_count,
+    target_candy_count,
+    chocolate_count,
+    candy_count,
+    status,
+    started_at,
+    ended_at
+) VALUES
+    (
+        (SELECT user_id
+         FROM users
+         WHERE login_id = 'worker01'),
+
+        5,                         -- 초콜릿 목표 5세트
+        20,                        -- 사탕 목표 20개
+        50,                        -- 초콜릿 50개 = 5세트
+        20,
+        'COMPLETED',
+        '2026-08-04 09:00:00',
+        '2026-08-04 10:30:00'
+    ),
+    (
+        (SELECT user_id
+         FROM users
+         WHERE login_id = 'worker01'),
+
+        10,                        -- 초콜릿 목표 10세트
+        30,                        -- 사탕 목표 30개
+        24,
+        12,
+        'RUNNING',
+        '2026-08-05 13:00:00',
+        NULL
+    );
+
+
+-- 13. 제품 감지 및 분류 결과 더미 데이터
+INSERT INTO product_detections (
+    session_id,
+    product_type_id,
+    confidence,
+    image_path,
+    classification_status,
+    detected_at
+) VALUES
+    (
+        (
+            SELECT session_id
+            FROM production_sessions
+            WHERE status = 'RUNNING'
+            ORDER BY session_id DESC
+            LIMIT 1
+        ),
+        (
+            SELECT product_type_id
+            FROM product_types
+            WHERE product_type_code = 'CHOCOLATE'
+        ),
+        0.9625,
+        'uploads/detections/chocolate_001.jpg',
+        'SUCCESS',
+        '2026-08-05 13:05:10'
+    ),
+    (
+        (
+            SELECT session_id
+            FROM production_sessions
+            WHERE status = 'RUNNING'
+            ORDER BY session_id DESC
+            LIMIT 1
+        ),
+        NULL,
+        NULL,
+        'uploads/detections/failed_001.jpg',
+        'FAILED',
+        '2026-08-05 13:06:20'
+    );
+
+
+-- 14. 알림 더미 데이터
+INSERT INTO alerts (
+    session_id,
+    component_id,
+    product_detection_id,
+    checked_by_user_id,
+    alert_type,
+    priority,
+    recovery_status,
+    check_status,
+    alert_message,
+    created_at,
+    recovered_at,
+    checked_at
+) VALUES
+    -- INFO 알림: 복구 및 확인 정보 없음
+    (
+        (
+            SELECT session_id
+            FROM production_sessions
+            WHERE status = 'RUNNING'
+            ORDER BY session_id DESC
+            LIMIT 1
+        ),
+        NULL,
+        NULL,
+        NULL,
+        'INFO',
+        'LOW',
+        NULL,
+        NULL,
+        '생산 작업이 정상적으로 시작되었습니다.',
+        '2026-08-05 13:00:00',
+        NULL,
+        NULL
+    ),
+
+    -- ERROR 알림: 아직 복구되지 않았고 확인하지 않은 상태
+    (
+        (
+            SELECT session_id
+            FROM production_sessions
+            WHERE status = 'RUNNING'
+            ORDER BY session_id DESC
+            LIMIT 1
+        ),
+        (
+            SELECT component_id
+            FROM system_components
+            WHERE component_code = 'CAMERA'
+        ),
+        (
+            SELECT product_detection_id
+            FROM product_detections
+            WHERE classification_status = 'FAILED'
+            ORDER BY product_detection_id DESC
+            LIMIT 1
+        ),
+        NULL,
+        'ERROR',
+        'HIGH',
+        'NOT_RECOVERED',
+        'UNCHECKED',
+        '카메라 촬영 결과에서 제품 유형을 식별하지 못했습니다.',
+        '2026-08-05 13:06:20',
+        NULL,
+        NULL
+    );

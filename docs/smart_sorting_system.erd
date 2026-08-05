@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<diagram version="1" name="smart_sorting_system.erd">
+	<entities>
+		<data-source id="mysql8-19cf42a4e6f-6e8d0cb58441cb7">
+			<entity id="1" name="alerts" fq-name="smart_sorting_system.alerts" order="0" font="Segoe UI:9:0" x="479" y="386">
+				<path name="smart_sorting_system"/>
+			</entity>
+			<entity id="2" name="product_detections" fq-name="smart_sorting_system.product_detections" order="1" font="Segoe UI:9:0" x="490" y="118">
+				<path name="smart_sorting_system"/>
+			</entity>
+			<entity id="3" name="product_types" fq-name="smart_sorting_system.product_types" order="2" font="Segoe UI:9:0" x="824" y="138">
+				<path name="smart_sorting_system"/>
+			</entity>
+			<entity id="4" name="production_sessions" fq-name="smart_sorting_system.production_sessions" order="3" font="Segoe UI:9:0" x="56" y="85">
+				<path name="smart_sorting_system"/>
+			</entity>
+			<entity id="5" name="system_components" fq-name="smart_sorting_system.system_components" order="4" font="Segoe UI:9:0" x="830" y="458">
+				<path name="smart_sorting_system"/>
+			</entity>
+			<entity id="6" name="users" fq-name="smart_sorting_system.users" order="5" font="Segoe UI:9:0" x="86" y="455">
+				<path name="smart_sorting_system"/>
+			</entity>
+		</data-source>
+	</entities>
+	<relations>
+		<relation name="fk_alerts_product_detection" fq-name="smart_sorting_system.alerts.fk_alerts_product_detection" type="fk" pk-ref="2" fk-ref="1"/>
+		<relation name="fk_product_detections_product_type" fq-name="smart_sorting_system.product_detections.fk_product_detections_product_type" type="fk" pk-ref="3" fk-ref="2"/>
+		<relation name="fk_alerts_session" fq-name="smart_sorting_system.alerts.fk_alerts_session" type="fk" pk-ref="4" fk-ref="1">
+			<bend type="abs" x="373" y="392"/>
+		</relation>
+		<relation name="fk_product_detections_session" fq-name="smart_sorting_system.product_detections.fk_product_detections_session" type="fk" pk-ref="4" fk-ref="2">
+			<bend type="abs" x="514" y="210"/>
+		</relation>
+		<relation name="fk_alerts_component" fq-name="smart_sorting_system.alerts.fk_alerts_component" type="fk" pk-ref="5" fk-ref="1"/>
+		<relation name="fk_alerts_checked_user" fq-name="smart_sorting_system.alerts.fk_alerts_checked_user" type="fk" pk-ref="6" fk-ref="1">
+			<bend type="abs" x="431" y="534"/>
+			<bend type="abs" x="736" y="606"/>
+		</relation>
+		<relation name="fk_production_sessions_user" fq-name="smart_sorting_system.production_sessions.fk_production_sessions_user" type="fk" pk-ref="6" fk-ref="4"/>
+	</relations>
+</diagram>
