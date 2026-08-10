@@ -515,3 +515,12 @@ INSERT INTO alerts (
         NULL,
         NULL
     );
+
+UPDATE users
+SET password_hash = '$2a$11$YZfLhNms4lQpjgQNk3z4O.UEsg8NYXsQrjw8II7KA2v.jwO99quni'
+WHERE login_id = 'worker01';
+
+UPDATE production_sessions 
+   SET status = 'COMPLETED'
+      ,ended_at = NOW() WHERE session_id = 2;
+    

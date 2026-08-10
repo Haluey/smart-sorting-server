@@ -146,6 +146,85 @@
 
 ---
 
+## 2026-08-10 — ASP.NET Core 서버 구축 및 인증·생산 작업 API 구현
+
+### 서버 프로젝트 구축
+
+- .NET 10 기반 ASP.NET Core Web API 프로젝트 생성
+- Controller 방식의 API 구조 적용
+- OpenAPI 설정 및 프로젝트 기본 실행 확인
+- MySQL 연동을 위해 `MySql.EntityFrameworkCore` 적용
+- User Secrets를 사용하여 MySQL 연결 정보 분리
+- `AppDbContext` 구성 후 기존 `smart_sorting_system` 데이터베이스 연결 확인
+
+### Entity 및 데이터베이스 매핑
+
+- 기존 데이터베이스 구조에 맞춰 Entity 클래스 작성
+    - `User`
+    - `ProductType`
+    - `SystemComponent`
+    - `ProductionSession`
+    - `ProductDetection`
+    - `Alert`
+- EF Core Fluent API를 사용하여 C# Entity와 MySQL 테이블 및 컬럼 매핑
+- FK 관계와 Nullable 컬럼 구조 반영
+- `DbSet`을 통해 각 테이블에 접근할 수 있도록 `AppDbContext` 구성
+
+### 로그인 및 인증 기능 구현
+
+- API 요청/응답 데이터와 DB Entity를 분리하기 위해 DTO 구조 적용
+- `LoginRequest` DTO 작성
+- `BCrypt.Net-Next`를 사용하여 사용자 입력 비밀번호와 DB의 비밀번호 해시 비교
+- 로그인 API 구현
+    - 로그인 아이디를 기준으로 사용자 조회
+    - 비밀번호 검증
+    - 로그인 성공/실패 응답 처리
+- Postman을 이용하여 로그인 API 동작 확인
+
+### JWT 인증 적용
+
+- JWT Bearer 기반 사용자 인증 기능 적용
+- JWT 관련 설정값을 User Secrets로 분리
+    - 서명 키
+    - Issuer
+    - Audience
+- 로그인 성공 시 사용자 정보를 포함한 JWT 발급
+    - 사용자 ID
+    - 로그인 ID
+    - 사용자 권한
+- JWT 유효시간을 설정하고 서명, 발급자, 대상, 만료시간 검증 적용
+- `Authentication`과 `Authorization` 미들웨어 구성
+- Postman을 통해 JWT 인증 테스트
+    - 토큰 없이 접근 시 `401 Unauthorized`
+    - 유효한 Bearer Token 전달 시 정상 접근 확인
+
+### 생산 작업 API 구현
+
+- 생산 시작 요청을 위한 `ProductionSessionStartRequest` DTO 작성
+- 로그인한 사용자의 ID를 요청 Body가 아닌 JWT에서 확인하도록 구성
+- 생산 작업 시작 API 구현
+    - 초콜릿 목표 세트 수 입력
+    - 사탕 목표 수량 입력
+    - 초기 생산 수량 0으로 설정
+    - 생산 상태 `RUNNING`으로 생성
+- 현재 진행 중인 생산 작업 조회 API 구현
+- 생산 작업 완료 API 구현
+    - 상태를 `COMPLETED`로 변경
+    - 작업 종료 시간 기록
+- 동일 컨베이어에서 여러 생산 작업이 동시에 진행되지 않도록 활성 작업 중복 생성 방지
+    - `RUNNING` 또는 `PAUSED` 상태의 작업이 존재하면 새로운 생산 작업 생성 제한
+    - 중복 생성 요청 시 `409 Conflict` 반환
+- Postman과 DBeaver를 이용하여 API 응답 및 실제 DB 저장 결과 확인
+
+### 생산 작업 운영 방식 정리
+
+- 현재 시스템은 단일 컨베이어 라인을 기준으로 생산 작업을 관리하도록 구성
+- 하나의 활성 생산 작업이 진행 중인 상태에서 새로운 생산 작업이 중복 생성되지 않도록 제한
+- `RUNNING` 또는 `PAUSED` 상태의 생산 작업이 존재하면 새로운 생산 작업 시작 요청을 차단하도록 구성
+- 작업자별로 생산 세션을 구분하며, 작업자 교대 시 기존 세션을 종료한 후 다음 작업자가 새로운 생산 세션을 시작하는 방식으로 운영할 예정
+
+---
+
 ## 현재 완료 상태
 
 - [x] 데이터베이스 생성 스크립트
@@ -158,22 +237,32 @@
 - [x] 테스트용 더미 데이터
 - [x] DBeaver ERD
 - [x] ERDCloud ERD
-- [ ] ASP.NET Core Web API 프로젝트 생성
-- [ ] Entity Framework Core 모델 작성
-- [ ] 로그인 및 권한 API
-- [ ] 생산 작업 API
+- [x] ASP.NET Core Web API 프로젝트 생성
+- [x] MySQL 및 Entity Framework Core 연동
+- [x] Entity 모델 및 `AppDbContext` 작성
+- [x] BCrypt 기반 로그인 API 구현
+- [x] JWT 발급 및 인증 처리
+- [x] 생산 작업 시작 API
+- [x] 현재 생산 작업 조회 API
+- [x] 생산 작업 완료 API
+- [x] 활성 생산 작업 중복 생성 방지
 - [ ] 제품 감지 결과 API
+- [ ] 생산 수량 갱신 로직
 - [ ] 시스템 구성요소 상태 API
 - [ ] 알림 API
 - [ ] MQTT 연동
 - [ ] 관리자 대시보드 통계 API
+- [ ] Raspberry Pi 및 클라이언트 통합 테스트
 
 ---
 
 ## 다음 작업
 
-1. ASP.NET Core Web API 프로젝트를 생성합니다.
-2. MySQL 연결 정보를 환경별 설정 파일로 분리합니다.
-3. 테이블 구조에 맞는 Entity 모델과 `DbContext`를 작성합니다.
-4. 사용자 로그인과 JWT 인증부터 순서대로 API를 구현합니다.
-5. 제품 분류 프로그램 및 MQTT 메시지 형식을 서버 API와 맞춥니다.
+1. 제품 감지 결과 저장 API를 구현합니다.
+2. `product_detections` 저장과 생산 수량 갱신 로직을 연결합니다.
+3. 제품 분류 결과에 따라 초콜릿·사탕 생산 수량을 갱신합니다.
+4. 시스템 구성요소 상태 조회 및 변경 API를 구현합니다.
+5. 알림 조회 및 확인 처리 API를 구현합니다.
+6. MQTT 메시지 구조를 정의하고 서버와 연동합니다.
+7. 관리자 대시보드용 통계 API를 구현합니다.
+8. Raspberry Pi, 작업자 UI, 관리자 웹과 통합 테스트를 진행합니다.
