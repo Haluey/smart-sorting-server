@@ -524,3 +524,4 @@ UPDATE production_sessions
    SET status = 'COMPLETED'
       ,ended_at = NOW() WHERE session_id = 2;
     
+ALTER TABLE production_sessions AUTO_INCREMENT = 3;

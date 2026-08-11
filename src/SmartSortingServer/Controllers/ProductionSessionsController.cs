@@ -150,9 +150,9 @@ namespace SmartSortingServer.Controllers {
             });
         }
 
-        // 현재 생산 작업 완료
-        [HttpPatch("complete")]
-        public async Task<IActionResult> CompleteProduction() {
+        // 현재 생산 작업 종료
+        [HttpPatch("finish")]
+        public async Task<IActionResult> FinishProduction() {
             // 현재 진행 중인 생산 작업 조회
             var productionSession = await _context.ProductionSessions
                 .Where(s => s.Status == "RUNNING" || s.Status == "PAUSED")
@@ -166,17 +166,59 @@ namespace SmartSortingServer.Controllers {
                 });
             }
 
-            // 생산 작업 완료 처리
-            productionSession.Status = "COMPLETED";
+            // 초콜릿 제품 유형 조회
+            var chocolateType = await _context.ProductTypes
+                .FirstOrDefaultAsync(
+                    p => p.ProductTypeCode == "CHOCOLATE"
+                );
+
+            // 초콜릿 제품 유형 정보가 없는 경우
+            if (chocolateType == null) {
+                return BadRequest(new {
+                    message = "초콜릿 제품 유형 정보를 찾을 수 없습니다."
+                });
+            }
+
+            // 초콜릿 목표 낱개 수 계산
+            // 예: 목표 5세트 × 세트당 10개 = 50개
+            int targetChocolateCount =
+                productionSession.TargetChocolateSetCount
+                * chocolateType.UnitPerSet;
+
+            // 초콜릿 목표 달성 여부
+            bool isChocolateCompleted =
+                productionSession.ChocolateCount >= targetChocolateCount;
+
+            // 사탕 목표 달성 여부
+            bool isCandyCompleted =
+                productionSession.CandyCount >= productionSession.TargetCandyCount;
+
+            // 전체 목표 달성 여부
+            bool isTargetCompleted =
+                isChocolateCompleted && isCandyCompleted;
+
+            // 목표 달성 여부에 따라 생산 상태 결정
+            if (isTargetCompleted) {
+                productionSession.Status = "COMPLETED";
+            }
+            else {
+                productionSession.Status = "CANCELLED";
+            }
+
+            // 생산 작업 종료 시간 기록
             productionSession.EndedAt = DateTime.Now;
             productionSession.UpdatedAt = DateTime.Now;
 
             await _context.SaveChangesAsync();
 
             return Ok(new {
-                message = "생산 작업이 완료되었습니다.",
+                message = "생산 작업이 종료되었습니다.",
                 sessionId = productionSession.SessionId,
                 status = productionSession.Status,
+                targetChocolateSetCount = productionSession.TargetChocolateSetCount,
+                targetCandyCount = productionSession.TargetCandyCount,
+                chocolateCount = productionSession.ChocolateCount,
+                candyCount = productionSession.CandyCount,
                 endedAt = productionSession.EndedAt
             });
         }
