@@ -310,6 +310,154 @@
 
 ---
 
+## 2026-08-12
+
+### MQTT 제품 감지 연동
+
+- ASP.NET Core 서버와 Mosquitto MQTT Broker를 연동하였다.
+- `MQTTnet`을 이용하여 MQTT Subscriber를 구현하였다.
+- 서버 실행 시 MQTT Broker에 자동으로 연결되도록 구성하였다.
+- MQTT로 수신한 제품 감지 데이터를 기존 `ProductDetectionService`와 연동하였다.
+- REST API와 MQTT에서 동일한 제품 감지 처리 로직을 사용하도록 구성하였다.
+
+### MQTT 제품 감지 처리 흐름
+
+```text
+Vision / MQTT Client
+        ↓
+Mosquitto MQTT Broker
+        ↓
+ASP.NET Core
+MqttSubscriberService
+        ↓
+ProductDetectionService
+        ↓
+제품 감지 결과 저장
+생산량 갱신
+자동 알림 생성
+장비 상태 갱신
+```
+
+### MQTT Topic 정리
+
+기존 제품 감지 Topic을 전체 MQTT Topic 규칙에 맞게 변경하였다.
+
+```text
+기존
+smart-sorting/product-detection
+
+변경
+smart_sorting/vision/product_detection
+```
+
+현재 큰 틀에서 정의한 주요 Topic은 다음과 같다.
+
+| Topic | 방향 | 역할 |
+|---|---|---|
+| `smart_sorting/vision/product_detection` | Vision → Server | 제품 분류 결과 전달 |
+| `smart_sorting/production/status` | Server → Client | 생산 현황 실시간 전달 |
+| `smart_sorting/alert` | Server → Client | 실시간 알림 전달 |
+| `smart_sorting/component/status` | Server → Client | 시스템 구성요소 상태 전달 |
+| `smart_sorting/line/control` | Worker UI → Control | 컨베이어 제어 명령 전달 |
+| `smart_sorting/line/status` | Control/Server → Worker UI | 컨베이어 상태 전달 |
+
+### MQTT 동작 테스트
+
+MQTT Explorer를 이용하여 다음 흐름을 테스트하였다.
+
+```text
+MQTT Explorer
+        ↓
+smart_sorting/vision/product_detection
+        ↓
+Mosquitto
+        ↓
+ASP.NET Core
+        ↓
+ProductDetectionService
+        ↓
+MySQL
+```
+
+- 제품 감지 MQTT 메시지 수신 확인
+- 제품 감지 결과 DB 저장 확인
+- 정상 분류 시 생산량 증가 확인
+- 분류 실패 시 `ERROR` 알림 자동 생성 확인
+- `VISION_MODULE` 상태 변경 확인
+- 초콜릿 세트 생산 완료 시 `INFO` 알림 생성 확인
+- 변경된 Topic인 `smart_sorting/vision/product_detection`으로 정상 수신 확인
+
+### REST API와 MQTT 처리 구조
+
+제품 감지 처리 로직은 `ProductDetectionService`에서 공통으로 처리한다.
+
+```text
+REST API
+   ↓
+ProductDetectionsController
+   ┐
+   ├─→ ProductDetectionService → DB
+   │
+MQTT
+   ↓
+MqttSubscriberService
+   ┘
+```
+
+따라서 기존 REST API를 유지하면서 MQTT를 통한 제품 감지 입력도 사용할 수 있다.
+
+### 작업자 UI 통신 구조 정리
+
+작업자 UI는 REST API와 MQTT의 역할을 구분하여 사용하도록 큰 틀을 정리하였다.
+
+#### REST API
+
+- 로그인
+- 생산 세션 시작
+- 현재 생산 세션 조회
+- 생산 세션 종료
+
+#### MQTT Subscribe
+
+```text
+smart_sorting/production/status
+smart_sorting/line/status
+smart_sorting/alert
+```
+
+#### MQTT Publish
+
+```text
+smart_sorting/line/control
+```
+
+세부 MQTT Payload 구조와 라인 제어 처리 방식은 작업자 UI 및 장비 담당과 협의 후 확정한다.
+
+### 관리자 웹 통신 구조 정리
+
+관리자 웹은 조회 및 설정 기능은 REST API를 사용하고,
+실시간 상태 갱신은 MQTT를 사용하는 방향으로 큰 틀을 정리하였다.
+
+#### MQTT Subscribe
+
+```text
+smart_sorting/production/status
+smart_sorting/alert
+smart_sorting/component/status
+```
+
+관리자 대시보드에서 추가로 필요한 REST API는 다음과 같다.
+
+- 오늘 생산량 요약
+- 시간대별 생산량 추이
+- 제품 분류 비율
+- 최근 제품 감지 결과 및 이미지
+- 생산 목표 조회 및 설정
+
+세부 API 응답 구조와 MQTT Payload 구조는 관리자 웹 구현 과정에서 확정한다.
+
+---
+
 ## 현재 완료 상태
 
 - [x] 데이터베이스 생성 스크립트
@@ -346,9 +494,18 @@
 - [x] 알림과 현재 생산 세션 연결
 - [x] 알림과 제품 감지 결과 연결 구조 구현
 - [x] 동일 구성요소의 미복구 알림을 고려한 상태 복구 처리
-- [ ] 제품 분류 실패 시 자동 알림 생성 테스트
-- [ ] 초콜릿 세트 완료 INFO 알림 생성 테스트
-- [ ] MQTT 연동
+- [x] 제품 분류 실패 시 자동 `ERROR` 알림 생성
+- [x] 초콜릿 세트 완료 시 `INFO` 알림 생성
+- [x] 제품 감지 처리 로직 `ProductDetectionService` 분리
+- [x] 외부 HTTP API 접속 확인
+- [x] Mosquitto 외부 접속 확인
+- [x] MQTT Broker와 ASP.NET Core 서버 연결
+- [x] MQTT 제품 감지 Subscribe 구현
+- [x] MQTT 제품 감지 결과 DB 저장 및 생산량 갱신 테스트
+- [x] MQTT 제품 감지 Topic 이름 정리
+- [x] 작업자 UI 통신 구조 큰 틀 정리
+- [x] 관리자 웹 통신 구조 큰 틀 정리
+- [ ] 서버 → 클라이언트 MQTT Publish 구현
 - [ ] 관리자 대시보드 통계 API
 - [ ] Raspberry Pi 및 클라이언트 통합 테스트
 
@@ -356,10 +513,21 @@
 
 ## 다음 작업
 
-1. 제품 분류 실패 시 `ERROR` 알림이 자동 생성되는지 테스트합니다.
-2. 초콜릿 생산 수량이 세트 단위에 도달할 때 `INFO` 알림이 자동 생성되는지 테스트합니다.
-3. 제품 감지 결과와 자동 생성된 알림의 `product_detection_id` 연결을 확인합니다.
-4. 실제 장비 및 프로그램에서 발생하는 오류·경고 알림 발생 기준을 정리합니다.
-5. MQTT 메시지 구조를 정의하고 서버와 연동합니다.
-6. 관리자 대시보드용 통계 API를 구현합니다.
-7. Raspberry Pi, 작업자 UI, 관리자 웹과 통합 테스트를 진행합니다.
+1. 관리자 대시보드용 통계 API를 구현한다.
+    - 오늘 생산량 요약
+    - 시간대별 생산량 추이
+    - 제품 분류 비율
+    - 최근 제품 감지 결과 및 이미지
+
+2. 작업자 UI 및 관리자 웹 담당과 세부 MQTT Payload 구조를 확정한다.
+
+3. 서버에서 다음 Topic의 MQTT Publish 기능을 구현한다.
+    - `smart_sorting/production/status`
+    - `smart_sorting/alert`
+    - `smart_sorting/component/status`
+
+4. 작업자 UI의 라인 제어 처리 구조를 장비 담당과 확정한 뒤 다음 Topic을 연동한다.
+    - `smart_sorting/line/control`
+    - `smart_sorting/line/status`
+
+5. Raspberry Pi, 작업자 UI, 관리자 웹과 실제 통합 테스트를 진행한다.

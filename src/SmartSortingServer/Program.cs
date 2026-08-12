@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using SmartSortingServer.Data;
+using SmartSortingServer.Services;
 using System.Text;
 
 namespace SmartSortingServer {
@@ -11,6 +12,9 @@ namespace SmartSortingServer {
 
             // 서비스 등록
             builder.Services.AddControllers();
+
+            builder.Services.AddScoped<ProductDetectionService>();
+            builder.Services.AddHostedService<MqttSubscriberService>();
 
             // OpenAPI 문서 기능 등록
             builder.Services.AddOpenApi();
@@ -79,7 +83,9 @@ namespace SmartSortingServer {
             }
 
             // HTTP 요청을 HTTPS로 리다이렉트
-            app.UseHttpsRedirection();
+            if (!app.Environment.IsDevelopment()) {
+                app.UseHttpsRedirection();
+            }
 
             // 사용자 인증 처리
             app.UseAuthentication();
