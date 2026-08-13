@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SmartSortingServer.Data;
 using SmartSortingServer.DTOs;
+using SmartSortingServer.Services;
 
 namespace SmartSortingServer.Controllers {
     [ApiController]
@@ -10,9 +11,14 @@ namespace SmartSortingServer.Controllers {
     [Authorize]
     public class SystemComponentsController : ControllerBase {
         private readonly AppDbContext _context;
+        private readonly MqttPublisherService _mqttPublisher;
 
-        public SystemComponentsController(AppDbContext context) {
+        public SystemComponentsController(
+            AppDbContext context,
+            MqttPublisherService mqttPublisher) {
+
             _context = context;
+            _mqttPublisher = mqttPublisher;
         }
 
         // 시스템 구성요소 전체 조회
@@ -52,7 +58,8 @@ namespace SmartSortingServer.Controllers {
 
             if (!allowedStatuses.Contains(status)) {
                 return BadRequest(new {
-                    message = "상태는 NORMAL, WARNING, ERROR, OFFLINE만 사용할 수 있습니다."
+                    message =
+                        "상태는 NORMAL, WARNING, ERROR, OFFLINE만 사용할 수 있습니다."
                 });
             }
 
@@ -64,7 +71,8 @@ namespace SmartSortingServer.Controllers {
 
             if (component == null) {
                 return NotFound(new {
-                    message = "시스템 구성요소를 찾을 수 없습니다."
+                    message =
+                        "시스템 구성요소를 찾을 수 없습니다."
                 });
             }
 
@@ -77,14 +85,41 @@ namespace SmartSortingServer.Controllers {
 
             await _context.SaveChangesAsync();
 
+            // 실제 상태가 변경된 경우에만 MQTT Publish
+            if (previousStatus != component.CurrentStatus) {
+                await _mqttPublisher.PublishAsync(
+                    "smart_sorting/component/status",
+                    new {
+                        componentCode =
+                            component.ComponentCode,
+
+                        status =
+                            component.CurrentStatus
+                    }
+                );
+            }
+
             return Ok(new {
-                message = "시스템 구성요소 상태가 변경되었습니다.",
-                componentId = component.ComponentId,
-                componentCode = component.ComponentCode,
-                componentName = component.ComponentName,
-                previousStatus = previousStatus,
-                currentStatus = component.CurrentStatus,
-                statusUpdatedAt = component.StatusUpdatedAt
+                message =
+                    "시스템 구성요소 상태가 변경되었습니다.",
+
+                componentId =
+                    component.ComponentId,
+
+                componentCode =
+                    component.ComponentCode,
+
+                componentName =
+                    component.ComponentName,
+
+                previousStatus =
+                    previousStatus,
+
+                currentStatus =
+                    component.CurrentStatus,
+
+                statusUpdatedAt =
+                    component.StatusUpdatedAt
             });
         }
     }

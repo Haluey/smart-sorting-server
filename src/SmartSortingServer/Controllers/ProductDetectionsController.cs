@@ -30,11 +30,16 @@ namespace SmartSortingServer.Controllers {
                     message = "제품 감지 결과가 저장되었습니다.",
                     productDetectionId =
                         productDetection.ProductDetectionId,
+
                     sessionId = productDetection.SessionId,
+
                     productTypeCode = request.ProductTypeCode,
+
                     confidence = productDetection.Confidence,
+
                     classificationStatus =
                         productDetection.ClassificationStatus,
+
                     detectedAt = productDetection.DetectedAt
                 });
             }

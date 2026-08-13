@@ -458,6 +458,152 @@ smart_sorting/component/status
 
 ---
 
+## 2026-08-13
+
+### 작업자·관리자 MQTT 통신 구조 정리
+
+- 작업자 UI와 관리자 웹에서 필요한 MQTT Topic을 구분하고 통신 구조를 정리하였다.
+- 작업자와 관리자가 함께 사용하는 생산 현황 및 알림 Topic은 공통 Topic을 사용하도록 구성하였다.
+- 관리자 웹에서만 사용하는 시스템 구성요소 상태 변경 Topic을 별도로 구성하였다.
+- 작업자 UI에서 컨베이어 제어 명령을 전달하고 실제 장비 상태를 다시 수신하는 흐름을 정리하였다.
+
+#### MQTT Topic 구성
+
+| 구분 | Topic | 방향 | 용도 |
+| --- | --- | --- | --- |
+| 공통 | `smart_sorting/production/status` | 서버 → 작업자 / 관리자 | 생산 현황 실시간 전달 |
+| 공통 | `smart_sorting/alert` | 서버 → 작업자 / 관리자 | 신규 알림 실시간 전달 |
+| 작업자 | `smart_sorting/line/control` | 작업자 → 제어 장치 | 컨베이어 시작·정지·속도 제어 |
+| 작업자 | `smart_sorting/line/status` | 제어 장치 → 작업자 | 실제 컨베이어 동작 상태 전달 |
+| 관리자 | `smart_sorting/component/status` | 서버 → 관리자 | 시스템 구성요소 상태 변경 전달 |
+| 서버 입력 | `smart_sorting/vision/product_detection` | Vision → 서버 | 제품 감지 결과 전달 |
+
+### 생산 현황 MQTT Payload 정리
+
+- 초콜릿과 사탕의 현재 생산량, 목표 생산량, 세트 구성 수량, 완료 세트 수, 진행률을 전달하도록 구성하였다.
+- 초콜릿의 목표 개수는 목표 세트 수에 `unitPerSet`을 곱해 계산한다.
+- 사탕은 1개가 1세트이므로 `unitPerSet = 1`을 사용한다.
+- `unitPerSet`은 `product_types` 테이블의 값을 사용하도록 수정하였다.
+
+```json
+{
+  "sessionId": 12,
+  "status": "RUNNING",
+  "chocolate": {
+    "currentCount": 20,
+    "targetCount": 100,
+    "unitPerSet": 10,
+    "setCount": 2,
+    "progress": 20
+  },
+  "candy": {
+    "currentCount": 35,
+    "targetCount": 100,
+    "unitPerSet": 1,
+    "setCount": 35,
+    "progress": 35
+  }
+}
+```
+
+### 생산 현황 MQTT Publish 구현
+
+- 제품 분류 성공 시 생산량 변경 결과를 `smart_sorting/production/status` Topic으로 Publish하도록 구현하였다.
+- 기존 REST 제품 감지 기능은 유지하고, REST와 MQTT 입력이 동일한 제품 감지 처리 로직을 사용하도록 구성하였다.
+- 초콜릿과 사탕의 생산 수량 및 진행률이 실제 DB 값 기준으로 계산되도록 하였다.
+
+### 알림 MQTT Publish 구현
+
+- 제품 분류 과정에서 새 알림이 생성되면 `smart_sorting/alert` Topic으로 전달하도록 구현하였다.
+- 초콜릿 세트 생산 완료 시 INFO 알림을 생성하고 전달한다.
+- 제품 분류 실패 시 ERROR 알림을 생성하고 전달한다.
+- 관리자와 작업자가 동일한 알림 Payload를 사용할 수 있도록 공통 형식으로 정리하였다.
+
+```json
+{
+  "alertId": 15,
+  "alertType": "ERROR",
+  "priority": "MEDIUM",
+  "componentCode": "VISION_MODULE",
+  "alertMessage": "제품 분류에 실패했습니다.",
+  "createdAt": "..."
+}
+```
+
+### 시스템 구성요소 상태 MQTT Publish 구현
+
+- 시스템 구성요소 상태 변경 시 `smart_sorting/component/status` Topic으로 변경된 상태를 전달하도록 구현하였다.
+- 시스템 구성요소 상태 API를 통한 수동 상태 변경 시 MQTT Publish가 정상 동작하는 것을 확인하였다.
+
+```json
+{
+  "componentCode": "CAMERA",
+  "status": "ERROR"
+}
+```
+
+### 제품 분류 실패 시 VISION_MODULE 상태 자동 변경
+
+- 제품 분류에 실패하면 `VISION_MODULE` 상태를 `ERROR`로 변경하도록 구현하였다.
+- 기존 상태가 `ERROR`가 아닌 경우에만 실제 상태 변경으로 판단하여 `component/status` MQTT 메시지를 전달한다.
+- 이미 `ERROR` 상태인 경우 중복 상태 메시지를 전달하지 않도록 처리하였다.
+
+```text
+제품 분류 FAILED
+        ↓
+ERROR 알림 생성
+        ↓
+VISION_MODULE 상태 확인
+        ↓
+NORMAL → ERROR
+        ↓
+component/status MQTT Publish
+```
+
+### 알림 복구에 따른 장비 상태 재계산 및 MQTT Publish
+
+- WARNING 또는 ERROR 알림 복구 시 해당 시스템 구성요소에 남아 있는 미복구 알림을 다시 확인하도록 구현하였다.
+- 같은 장비에 미복구 ERROR가 있으면 `ERROR` 상태를 유지한다.
+- ERROR는 없고 미복구 WARNING이 있으면 `WARNING` 상태로 변경한다.
+- 미복구 WARNING과 ERROR가 모두 없으면 `NORMAL` 상태로 변경한다.
+- 실제 구성요소 상태가 변경된 경우 `component/status` MQTT 메시지를 전달하도록 구현하였다.
+
+```text
+ERROR 알림 Recover
+        ↓
+같은 장비의 미복구 알림 확인
+        ↓
+ERROR 존재   → ERROR
+WARNING 존재 → WARNING
+둘 다 없음   → NORMAL
+        ↓
+상태 변경 시 MQTT Publish
+```
+
+### 관리자 웹 MQTT WebSocket 연동
+
+- 브라우저 기반 관리자 웹에서 MQTT 메시지를 수신할 수 있도록 Mosquitto WebSocket Listener를 추가하였다.
+- 기존 일반 MQTT 통신은 `1883` 포트를 유지하고, 브라우저용 WebSocket 포트로 `9001`을 사용하도록 구성하였다.
+- Windows 방화벽에서 TCP `9001` 인바운드 허용 규칙을 추가하였다.
+- 공유기에서 외부 `9001` 포트를 서버 PC의 `9001` 포트로 포트포워딩하였다.
+- 외부 PC에서 `Test-NetConnection`을 통해 `9001` 포트 연결을 확인하였다.
+
+#### 관리자 웹 연결 구조
+
+```text
+ASP.NET Core / Raspberry Pi / MQTT Explorer
+        ↓
+    MQTT TCP 1883
+        ↓
+     Mosquitto
+        ↑
+ WebSocket 9001
+        ↑
+    관리자 웹
+```
+
+---
+
 ## 현재 완료 상태
 
 - [x] 데이터베이스 생성 스크립트
@@ -505,29 +651,46 @@ smart_sorting/component/status
 - [x] MQTT 제품 감지 Topic 이름 정리
 - [x] 작업자 UI 통신 구조 큰 틀 정리
 - [x] 관리자 웹 통신 구조 큰 틀 정리
-- [ ] 서버 → 클라이언트 MQTT Publish 구현
+- [x] 작업자·관리자 공통 MQTT Payload 구조 정리
+- [x] 서버 → 클라이언트 MQTT Publish 구현
+- [x] `smart_sorting/production/status` Publish 구현
+- [x] `smart_sorting/alert` Publish 구현
+- [x] `smart_sorting/component/status` Publish 구현
+- [x] 제품 분류 실패 시 `VISION_MODULE` `ERROR` 자동 변경
+- [x] 제품 분류 실패에 따른 `component/status` MQTT Publish
+- [x] 알림 복구 시 시스템 구성요소 상태 재계산
+- [x] 알림 복구에 따른 `component/status` MQTT Publish
+- [x] Mosquitto WebSocket `9001` Listener 구성
+- [x] 외부 네트워크에서 WebSocket 포트 연결 확인
+- [ ] 관리자 웹 MQTT WebSocket 연결 확인
+- [ ] 관리자 웹 MQTT 메시지 수신 확인
+- [ ] 수동 알림 생성 시 MQTT Publish 연동
+- [ ] 생산 작업 시작·종료 시 `production/status` MQTT Publish 연동
 - [ ] 관리자 대시보드 통계 API
+- [ ] 작업자 UI 라인 제어 MQTT 연동
 - [ ] Raspberry Pi 및 클라이언트 통합 테스트
 
 ---
 
 ## 다음 작업
 
-1. 관리자 대시보드용 통계 API를 구현한다.
+1. `AlertsController`의 수동 알림 생성 시 MQTT Publish 기능을 추가한다.
+    - `smart_sorting/alert`
+    - 알림 생성으로 구성요소 상태가 변경되는 경우 `smart_sorting/component/status`
+
+2. 생산 작업 시작·종료 시 생산 상태 변경 내용을 MQTT로 전달하도록 연동한다.
+    - `smart_sorting/production/status`
+
+3. 관리자 대시보드용 통계 API를 구현한다.
     - 오늘 생산량 요약
     - 시간대별 생산량 추이
     - 제품 분류 비율
     - 최근 제품 감지 결과 및 이미지
 
-2. 작업자 UI 및 관리자 웹 담당과 세부 MQTT Payload 구조를 확정한다.
-
-3. 서버에서 다음 Topic의 MQTT Publish 기능을 구현한다.
-    - `smart_sorting/production/status`
-    - `smart_sorting/alert`
-    - `smart_sorting/component/status`
-
-4. 작업자 UI의 라인 제어 처리 구조를 장비 담당과 확정한 뒤 다음 Topic을 연동한다.
+4. 작업자 UI의 라인 제어 처리 구조를 장비 담당과 최종 확정하고 MQTT Topic을 연동한다.
     - `smart_sorting/line/control`
     - `smart_sorting/line/status`
 
-5. Raspberry Pi, 작업자 UI, 관리자 웹과 실제 통합 테스트를 진행한다.
+5. 작업자 UI와 관리자 웹에 실제 MQTT 데이터를 연결해 화면 반영을 확인한다.
+
+6. Raspberry Pi, 작업자 UI, 관리자 웹과 실제 통합 테스트를 진행한다.

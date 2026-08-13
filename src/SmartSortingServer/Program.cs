@@ -14,6 +14,7 @@ namespace SmartSortingServer {
             builder.Services.AddControllers();
 
             builder.Services.AddScoped<ProductDetectionService>();
+            builder.Services.AddSingleton<MqttPublisherService>();
             builder.Services.AddHostedService<MqttSubscriberService>();
 
             // OpenAPI 문서 기능 등록

@@ -1,10 +1,11 @@
-﻿using System.Security.Claims;
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SmartSortingServer.Data;
 using SmartSortingServer.DTOs;
 using SmartSortingServer.Models;
+using SmartSortingServer.Services;
+using System.Security.Claims;
 
 namespace SmartSortingServer.Controllers {
     [ApiController]
@@ -12,9 +13,11 @@ namespace SmartSortingServer.Controllers {
     [Authorize]
     public class AlertsController : ControllerBase {
         private readonly AppDbContext _context;
+        private readonly MqttPublisherService _mqttPublisher;
 
-        public AlertsController(AppDbContext context) {
+        public AlertsController(AppDbContext context, MqttPublisherService mqttPublisher) {
             _context = context;
+            _mqttPublisher = mqttPublisher;
         }
 
         // 알림 전체 조회
@@ -307,6 +310,9 @@ namespace SmartSortingServer.Controllers {
             alert.RecoveryStatus = "RECOVERED";
             alert.RecoveredAt = DateTime.Now;
 
+            string? changedComponentCode = null;
+            string? changedComponentStatus = null;
+
             // 연결된 시스템 구성요소가 있는 경우
             if (alert.ComponentId != null) {
 
@@ -316,6 +322,10 @@ namespace SmartSortingServer.Controllers {
                     );
 
                 if (component != null) {
+
+                    // 변경 전 상태 저장
+                    string previousStatus =
+                        component.CurrentStatus;
 
                     // 같은 장비에 아직 복구되지 않은 ERROR가 있는지 확인
                     bool hasUnrecoveredError =
@@ -346,10 +356,36 @@ namespace SmartSortingServer.Controllers {
                     }
 
                     component.StatusUpdatedAt = DateTime.Now;
+
+                    // 실제 상태가 변경된 경우에만 MQTT 전송 대상 저장
+                    if (previousStatus != component.CurrentStatus) {
+
+                        changedComponentCode =
+                            component.ComponentCode;
+
+                        changedComponentStatus =
+                            component.CurrentStatus;
+                    }
                 }
             }
 
             await _context.SaveChangesAsync();
+
+            // 장비 상태가 실제로 변경된 경우 MQTT Publish
+            if (changedComponentCode != null
+                && changedComponentStatus != null) {
+
+                await _mqttPublisher.PublishAsync(
+                    "smart_sorting/component/status",
+                    new {
+                        componentCode =
+                            changedComponentCode,
+
+                        status =
+                            changedComponentStatus
+                    }
+                );
+            }
 
             return Ok(new {
                 message = "알림이 복구 처리되었습니다.",
