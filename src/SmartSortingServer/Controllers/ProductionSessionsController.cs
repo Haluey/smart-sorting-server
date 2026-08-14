@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using SmartSortingServer.Data;
 using SmartSortingServer.DTOs;
 using SmartSortingServer.Models;
+using SmartSortingServer.Services;
 using System.Security.Claims;
 
 namespace SmartSortingServer.Controllers {
@@ -12,16 +13,16 @@ namespace SmartSortingServer.Controllers {
     [Authorize]
     public class ProductionSessionsController : ControllerBase {
         private readonly AppDbContext _context;
+        private readonly MqttPublisherService _mqttPublisher;
 
-        public ProductionSessionsController(AppDbContext context) {
+        public ProductionSessionsController (AppDbContext context, MqttPublisherService mqttPublisher) {
             _context = context;
+            _mqttPublisher = mqttPublisher;
         }
 
         // 생산 작업 시작
         [HttpPost("start")]
-        public async Task<IActionResult> StartProduction(
-            ProductionSessionStartRequest request
-        ) {
+        public async Task<IActionResult> StartProduction (ProductionSessionStartRequest request) {
             // JWT에서 로그인한 사용자 ID 가져오기
             var userIdValue = User.FindFirstValue(
                 ClaimTypes.NameIdentifier
@@ -54,16 +55,33 @@ namespace SmartSortingServer.Controllers {
             }
 
             // 현재 진행 중인 생산 작업이 있는지 확인
-            bool hasActiveSession = await _context.ProductionSessions
-                .AnyAsync(s =>
-                    s.Status == "RUNNING" ||
-                    s.Status == "PAUSED"
-                );
+            bool hasActiveSession =
+                await _context.ProductionSessions
+                    .AnyAsync(s =>
+                        s.Status == "RUNNING" ||
+                        s.Status == "PAUSED"
+                    );
 
-            // 이미 진행 중인 작업이 있으면 새 작업 생성 불가
             if (hasActiveSession) {
                 return Conflict(new {
                     message = "이미 진행 중인 생산 작업이 있습니다."
+                });
+            }
+
+            // 제품 유형 조회
+            var chocolateType = await _context.ProductTypes
+                .FirstOrDefaultAsync(
+                    p => p.ProductTypeCode == "CHOCOLATE"
+                );
+
+            var candyType = await _context.ProductTypes
+                .FirstOrDefaultAsync(
+                    p => p.ProductTypeCode == "CANDY"
+                );
+
+            if (chocolateType == null || candyType == null) {
+                return BadRequest(new {
+                    message = "제품 유형 정보를 찾을 수 없습니다."
                 });
             }
 
@@ -86,12 +104,41 @@ namespace SmartSortingServer.Controllers {
                 UpdatedAt = DateTime.Now
             };
 
-            // DB에 생산 작업 추가
             _context.ProductionSessions.Add(productionSession);
 
             await _context.SaveChangesAsync();
 
-            // 생성된 생산 작업 정보 반환
+            // 초콜릿 목표 낱개 수
+            int chocolateTargetCount =
+                productionSession.TargetChocolateSetCount
+                * chocolateType.UnitPerSet;
+
+            // 생산 시작 MQTT Publish
+            await _mqttPublisher.PublishAsync(
+                "smart_sorting/production/status",
+                new {
+                    sessionId = productionSession.SessionId,
+                    status = productionSession.Status,
+
+                    chocolate = new {
+                        currentCount = 0,
+                        targetCount = chocolateTargetCount,
+                        unitPerSet = chocolateType.UnitPerSet,
+                        setCount = 0,
+                        progress = 0
+                    },
+
+                    candy = new {
+                        currentCount = 0,
+                        targetCount =
+                            productionSession.TargetCandyCount,
+                        unitPerSet = candyType.UnitPerSet,
+                        setCount = 0,
+                        progress = 0
+                    }
+                }
+            );
+
             return Ok(new {
                 message = "생산 작업 시작",
                 sessionId = productionSession.SessionId,
@@ -153,47 +200,54 @@ namespace SmartSortingServer.Controllers {
         // 현재 생산 작업 종료
         [HttpPatch("finish")]
         public async Task<IActionResult> FinishProduction() {
-            // 현재 진행 중인 생산 작업 조회
-            var productionSession = await _context.ProductionSessions
-                .Where(s => s.Status == "RUNNING" || s.Status == "PAUSED")
-                .OrderByDescending(s => s.StartedAt)
-                .FirstOrDefaultAsync();
 
-            // 진행 중인 생산 작업이 없는 경우
+            // 현재 진행 중인 생산 작업 조회
+            var productionSession =
+                await _context.ProductionSessions
+                    .Where(s =>
+                        s.Status == "RUNNING"
+                        || s.Status == "PAUSED"
+                    )
+                    .OrderByDescending(s => s.StartedAt)
+                    .FirstOrDefaultAsync();
+
             if (productionSession == null) {
                 return NotFound(new {
                     message = "진행 중인 생산 작업이 없습니다."
                 });
             }
 
-            // 초콜릿 제품 유형 조회
+            // 제품 유형 조회
             var chocolateType = await _context.ProductTypes
                 .FirstOrDefaultAsync(
                     p => p.ProductTypeCode == "CHOCOLATE"
                 );
 
-            // 초콜릿 제품 유형 정보가 없는 경우
-            if (chocolateType == null) {
+            var candyType = await _context.ProductTypes
+                .FirstOrDefaultAsync(
+                    p => p.ProductTypeCode == "CANDY"
+                );
+
+            if (chocolateType == null || candyType == null) {
                 return BadRequest(new {
-                    message = "초콜릿 제품 유형 정보를 찾을 수 없습니다."
+                    message = "제품 유형 정보를 찾을 수 없습니다."
                 });
             }
 
-            // 초콜릿 목표 낱개 수 계산
-            // 예: 목표 5세트 × 세트당 10개 = 50개
+            // 초콜릿 목표 낱개 수
             int targetChocolateCount =
                 productionSession.TargetChocolateSetCount
                 * chocolateType.UnitPerSet;
 
-            // 초콜릿 목표 달성 여부
+            // 목표 달성 여부
             bool isChocolateCompleted =
-                productionSession.ChocolateCount >= targetChocolateCount;
+                productionSession.ChocolateCount
+                >= targetChocolateCount;
 
-            // 사탕 목표 달성 여부
             bool isCandyCompleted =
-                productionSession.CandyCount >= productionSession.TargetCandyCount;
+                productionSession.CandyCount
+                >= productionSession.TargetCandyCount;
 
-            // 전체 목표 달성 여부
             bool isTargetCompleted =
                 isChocolateCompleted && isCandyCompleted;
 
@@ -205,22 +259,102 @@ namespace SmartSortingServer.Controllers {
                 productionSession.Status = "CANCELLED";
             }
 
-            // 생산 작업 종료 시간 기록
             productionSession.EndedAt = DateTime.Now;
             productionSession.UpdatedAt = DateTime.Now;
 
             await _context.SaveChangesAsync();
 
+            // 현재 세트 수
+            int chocolateSetCount =
+                chocolateType.UnitPerSet > 0
+                    ? productionSession.ChocolateCount
+                        / chocolateType.UnitPerSet
+                    : 0;
+
+            int candySetCount =
+                candyType.UnitPerSet > 0
+                    ? productionSession.CandyCount
+                        / candyType.UnitPerSet
+                    : 0;
+
+            // 진행률
+            int chocolateProgress =
+                targetChocolateCount > 0
+                    ? (int)Math.Round(
+                        (double)productionSession.ChocolateCount
+                        / targetChocolateCount
+                        * 100
+                    )
+                    : 0;
+
+            int candyProgress =
+                productionSession.TargetCandyCount > 0
+                    ? (int)Math.Round(
+                        (double)productionSession.CandyCount
+                        / productionSession.TargetCandyCount
+                        * 100
+                    )
+                    : 0;
+
+            // 생산 종료 MQTT Publish
+            await _mqttPublisher.PublishAsync(
+                "smart_sorting/production/status",
+                new {
+                    sessionId = productionSession.SessionId,
+                    status = productionSession.Status,
+
+                    chocolate = new {
+                        currentCount =
+                            productionSession.ChocolateCount,
+
+                        targetCount =
+                            targetChocolateCount,
+
+                        unitPerSet =
+                            chocolateType.UnitPerSet,
+
+                        setCount =
+                            chocolateSetCount,
+
+                        progress =
+                            chocolateProgress
+                    },
+
+                    candy = new {
+                        currentCount =
+                            productionSession.CandyCount,
+
+                        targetCount =
+                            productionSession.TargetCandyCount,
+
+                        unitPerSet =
+                            candyType.UnitPerSet,
+
+                        setCount =
+                            candySetCount,
+
+                        progress =
+                            candyProgress
+                    }
+                }
+            );
+
             return Ok(new {
                 message = "생산 작업이 종료되었습니다.",
                 sessionId = productionSession.SessionId,
                 status = productionSession.Status,
-                targetChocolateSetCount = productionSession.TargetChocolateSetCount,
-                targetCandyCount = productionSession.TargetCandyCount,
-                chocolateCount = productionSession.ChocolateCount,
-                candyCount = productionSession.CandyCount,
-                endedAt = productionSession.EndedAt
+                targetChocolateSetCount =
+                    productionSession.TargetChocolateSetCount,
+                targetCandyCount =
+                    productionSession.TargetCandyCount,
+                chocolateCount =
+                    productionSession.ChocolateCount,
+                candyCount =
+                    productionSession.CandyCount,
+                endedAt =
+                    productionSession.EndedAt
             });
         }
+
     }
 }

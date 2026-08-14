@@ -604,6 +604,116 @@ ASP.NET Core / Raspberry Pi / MQTT Explorer
 
 ---
 
+## 2026-08-14
+
+### 수동 알림 생성 MQTT Publish 구현
+
+- `AlertsController`의 수동 알림 생성 API와 MQTT Publish 기능을 연동하였다.
+- 새로운 알림이 생성되면 `smart_sorting/alert` Topic으로 알림 정보를 전달하도록 구현하였다.
+- WARNING 또는 ERROR 알림 생성으로 시스템 구성요소 상태가 실제로 변경된 경우 `smart_sorting/component/status` Topic으로 변경된 상태를 전달하도록 구현하였다.
+- 기존 상태와 동일한 상태로 변경되는 경우 불필요한 `component/status` 메시지를 중복 전송하지 않도록 처리하였다.
+
+#### 알림 생성 흐름
+
+```text
+POST /api/alerts
+        ↓
+알림 DB 저장
+        ↓
+smart_sorting/alert Publish
+        ↓
+구성요소 상태 변경 여부 확인
+        ↓
+상태가 변경된 경우
+smart_sorting/component/status Publish
+```
+
+### 수동 알림 MQTT 테스트
+
+- 시스템 구성요소 상태를 `NORMAL`로 설정한 후 WARNING 알림을 생성하여 테스트하였다.
+- 신규 WARNING 알림이 `smart_sorting/alert` Topic으로 정상 전달되는 것을 확인하였다.
+- 구성요소 상태가 `NORMAL → WARNING`으로 변경되면서 `smart_sorting/component/status` Topic으로 상태 변경 메시지가 전달되는 것을 확인하였다.
+- 동일 상태의 알림이 반복 발생하는 경우 알림 메시지만 새로 전달하고 구성요소 상태 메시지는 중복 Publish하지 않도록 구성하였다.
+
+### 생산 작업 상태 MQTT Publish 구현
+
+- 생산 작업 시작 및 종료 시 현재 생산 상태를 `smart_sorting/production/status` Topic으로 전달하도록 구현하였다.
+- 기존 제품 분류 성공 시 생산량 변경 Publish와 동일한 Payload 구조를 사용하도록 구성하였다.
+- 초콜릿과 사탕의 현재 수량, 목표 수량, 세트 구성 수량, 완료 세트 수 및 진행률을 함께 전달하도록 하였다.
+
+#### 생산 작업 시작
+
+생산 작업 생성 후 `RUNNING` 상태와 초기 생산 정보를 전달한다.
+
+```json
+{
+  "sessionId": 12,
+  "status": "RUNNING",
+  "chocolate": {
+    "currentCount": 0,
+    "targetCount": 20,
+    "unitPerSet": 10,
+    "setCount": 0,
+    "progress": 0
+  },
+  "candy": {
+    "currentCount": 0,
+    "targetCount": 3,
+    "unitPerSet": 1,
+    "setCount": 0,
+    "progress": 0
+  }
+}
+```
+
+#### 생산 작업 종료
+
+- 생산 목표를 모두 달성한 경우 `COMPLETED` 상태를 전달한다.
+- 목표를 달성하지 못한 상태에서 종료한 경우 `CANCELLED` 상태를 전달한다.
+- 종료 시점의 최종 생산량과 진행률을 함께 전달하도록 구현하였다.
+
+```text
+생산 시작
+→ RUNNING Publish
+
+제품 분류 성공
+→ 생산량 변경 Publish
+
+생산 종료
+→ COMPLETED / CANCELLED Publish
+```
+
+### MQTT 서버 기능 정리
+
+서버에서 사용하는 주요 MQTT 기능을 구현하였다.
+
+| Topic | 방향 | 용도 |
+| --- | --- | --- |
+| `smart_sorting/vision/product_detection` | Vision → 서버 | 제품 감지 결과 수신 |
+| `smart_sorting/production/status` | 서버 → 작업자 / 관리자 | 생산 현황 및 상태 변경 전달 |
+| `smart_sorting/alert` | 서버 → 작업자 / 관리자 | 신규 알림 전달 |
+| `smart_sorting/component/status` | 서버 → 관리자 | 시스템 구성요소 상태 변경 전달 |
+
+현재 서버에서는 다음 상황에 MQTT 메시지를 전달하도록 구성되어 있다.
+
+- 생산 작업 시작
+- 제품 분류 성공 및 생산량 변경
+- 생산 작업 종료
+- 자동 INFO / ERROR 알림 생성
+- 수동 알림 생성
+- 시스템 구성요소 상태 변경
+- 제품 분류 실패에 따른 `VISION_MODULE` 오류 상태 변경
+- 알림 복구에 따른 시스템 구성요소 상태 재계산
+
+### 개발 환경 오류 해결
+
+- Docker MySQL 컨테이너 실행 과정에서 호스트 `3306` 포트 바인딩 오류가 발생하였다.
+- Windows에서 `netstat` 및 `Get-NetTCPConnection`을 이용해 포트 사용 상태를 확인하였다.
+- 시스템 재부팅 후 Docker 및 MySQL 컨테이너를 다시 실행하여 데이터베이스 연결 문제를 해결하였다.
+- 이후 API 및 MQTT 테스트를 정상적으로 진행하였다.
+
+---
+
 ## 현재 완료 상태
 
 - [x] 데이터베이스 생성 스크립트
@@ -662,10 +772,10 @@ ASP.NET Core / Raspberry Pi / MQTT Explorer
 - [x] 알림 복구에 따른 `component/status` MQTT Publish
 - [x] Mosquitto WebSocket `9001` Listener 구성
 - [x] 외부 네트워크에서 WebSocket 포트 연결 확인
+- [x] 수동 알림 생성 시 MQTT Publish 연동
+- [x] 생산 작업 시작·종료 시 `production/status` MQTT Publish 연동
 - [ ] 관리자 웹 MQTT WebSocket 연결 확인
 - [ ] 관리자 웹 MQTT 메시지 수신 확인
-- [ ] 수동 알림 생성 시 MQTT Publish 연동
-- [ ] 생산 작업 시작·종료 시 `production/status` MQTT Publish 연동
 - [ ] 관리자 대시보드 통계 API
 - [ ] 작업자 UI 라인 제어 MQTT 연동
 - [ ] Raspberry Pi 및 클라이언트 통합 테스트
@@ -674,23 +784,21 @@ ASP.NET Core / Raspberry Pi / MQTT Explorer
 
 ## 다음 작업
 
-1. `AlertsController`의 수동 알림 생성 시 MQTT Publish 기능을 추가한다.
-    - `smart_sorting/alert`
-    - 알림 생성으로 구성요소 상태가 변경되는 경우 `smart_sorting/component/status`
-
-2. 생산 작업 시작·종료 시 생산 상태 변경 내용을 MQTT로 전달하도록 연동한다.
-    - `smart_sorting/production/status`
-
-3. 관리자 대시보드용 통계 API를 구현한다.
+1. 관리자 대시보드용 통계 API를 구현한다.
     - 오늘 생산량 요약
     - 시간대별 생산량 추이
     - 제품 분류 비율
     - 최근 제품 감지 결과 및 이미지
 
-4. 작업자 UI의 라인 제어 처리 구조를 장비 담당과 최종 확정하고 MQTT Topic을 연동한다.
+2. 관리자 웹에서 MQTT WebSocket 연결 및 실시간 메시지 수신을 확인한다.
+    - `smart_sorting/production/status`
+    - `smart_sorting/alert`
+    - `smart_sorting/component/status`
+
+3. 작업자 UI의 라인 제어 처리 구조를 장비 담당과 최종 확정하고 MQTT Topic을 연동한다.
     - `smart_sorting/line/control`
     - `smart_sorting/line/status`
 
-5. 작업자 UI와 관리자 웹에 실제 MQTT 데이터를 연결해 화면 반영을 확인한다.
+4. 작업자 UI와 관리자 웹에 실제 MQTT 데이터를 연결해 화면 반영을 확인한다.
 
-6. Raspberry Pi, 작업자 UI, 관리자 웹과 실제 통합 테스트를 진행한다.
+5. Raspberry Pi, 작업자 UI, 관리자 웹과 실제 통합 테스트를 진행한다.

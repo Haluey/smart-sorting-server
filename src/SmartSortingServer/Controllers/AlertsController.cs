@@ -136,7 +136,6 @@ namespace SmartSortingServer.Controllers {
 
             // 특정 제품 감지와 연결된 알림인 경우
             if (productDetection != null) {
-                // 해당 제품 감지가 속한 생산 세션 사용
                 sessionId = productDetection.SessionId;
             }
             else {
@@ -185,6 +184,10 @@ namespace SmartSortingServer.Controllers {
                 alert.CheckedAt = null;
             }
 
+            // 변경 전 구성요소 상태 저장
+            string previousComponentStatus =
+                component.CurrentStatus;
+
             // WARNING인 경우 구성요소 상태 변경
             if (alertType == "WARNING") {
                 component.CurrentStatus = "WARNING";
@@ -202,6 +205,31 @@ namespace SmartSortingServer.Controllers {
             _context.Alerts.Add(alert);
 
             await _context.SaveChangesAsync();
+
+            // 신규 알림 MQTT Publish
+            await _mqttPublisher.PublishAsync(
+                "smart_sorting/alert",
+                new {
+                    alertId = alert.AlertId,
+                    alertType = alert.AlertType,
+                    priority = alert.Priority,
+                    componentCode = component.ComponentCode,
+                    alertMessage = alert.AlertMessage,
+                    createdAt = alert.CreatedAt
+                }
+            );
+
+            // 구성요소 상태가 실제로 변경된 경우 MQTT Publish
+            if (previousComponentStatus != component.CurrentStatus) {
+
+                await _mqttPublisher.PublishAsync(
+                    "smart_sorting/component/status",
+                    new {
+                        componentCode = component.ComponentCode,
+                        status = component.CurrentStatus
+                    }
+                );
+            }
 
             return Ok(new {
                 message = "알림이 저장되었습니다.",
