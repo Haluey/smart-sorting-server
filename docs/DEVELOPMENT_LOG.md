@@ -714,10 +714,234 @@ smart_sorting/component/status Publish
 
 ---
 
+## 2026-08-18 — 생산 목표 관리 구조 개선 및 웹·Qt REST API 역할 분리
+
+### 관리자 웹 CORS 설정
+
+- 관리자 웹 개발 환경에서 ASP.NET Core REST API를 호출할 수 있도록 CORS 정책을 추가하였다.
+- 다음 개발 Origin을 허용하도록 설정하였다.
+  - `http://127.0.0.1:5500`
+  - `http://localhost:5500`
+- `Program.cs`에 `AddCors()`와 `UseCors()`를 적용하였다.
+- 관리자 웹에서 JWT Bearer Token을 이용해 인증이 필요한 REST API를 호출할 수 있도록 서버 접근 환경을 정리하였다.
+
+### 관리자 계정 BCrypt 해시 적용
+
+- 관리자 테스트 계정의 임시 비밀번호 값을 BCrypt 해시값으로 변경하였다.
+- 서버에서 `BCrypt.Net.BCrypt.HashPassword()`를 이용하여 테스트 비밀번호의 해시값을 생성하였다.
+- 생성한 해시값을 `users.password_hash`에 저장하여 작업자 계정과 동일한 방식으로 로그인할 수 있도록 정리하였다.
+
+### 생산 목표 관리 구조 분리
+
+- 기존에는 생산 작업 시작 요청과 함께 목표 생산량을 전달하는 구조였다.
+- 관리자 웹과 작업자 Qt의 역할을 분리하기 위해 생산 목표 설정과 생산 시작 기능을 분리하였다.
+- 관리자 웹에서는 생산 목표만 설정하고 실제 생산 시작·종료는 작업자 Qt에서 처리하도록 구조를 변경하였다.
+- 관리자 웹이 종료되어 있어도 작업자 Qt가 서버에 저장된 목표값을 이용해 생산을 시작할 수 있도록 생산 목표를 DB에서 관리하기로 결정하였다.
+
+```text
+관리자 웹
+        ↓
+생산 목표 설정
+        ↓
+production_targets 저장
+        ↓
+작업자 Qt에서 생산 시작
+        ↓
+서버가 현재 생산 목표 조회
+        ↓
+production_sessions에 목표값 복사
+        ↓
+생산 시작
+```
+
+### production_targets 테이블 추가
+
+- 현재 생산 목표를 별도로 관리하기 위해 `production_targets` 테이블을 추가하였다.
+- 현재 목표값만 저장하는 용도이므로 `target_id = 1`인 한 개의 행을 유지하도록 구성하였다.
+- 관리자가 새로운 목표를 설정할 때 새 행을 추가하지 않고 기존 행을 `UPDATE`하도록 정리하였다.
+- 테이블 컬럼은 다음과 같이 구성하였다.
+  - `target_id`
+  - `target_chocolate_set_count`
+  - `target_candy_count`
+  - `updated_at`
+- 현재 실행 중인 생산 세션의 목표값은 변경하지 않고, 수정된 목표는 다음 생산 세션 시작 시 적용하도록 구성하였다.
+
+### ProductionTarget 모델 및 EF Core 매핑
+
+- `ProductionTarget` Entity를 추가하였다.
+- 기존 Entity 작성 방식과 동일하게 단순 POCO 형태로 작성하였다.
+- `AppDbContext`에 `ProductionTargets` DbSet을 추가하였다.
+
+```csharp
+public DbSet<ProductionTarget> ProductionTargets { get; set; } = null!;
+```
+
+- Fluent API를 이용하여 `ProductionTarget` 모델과 `production_targets` 테이블을 매핑하였다.
+- 다음 프로퍼티와 DB 컬럼을 연결하였다.
+  - `TargetId` → `target_id`
+  - `TargetChocolateSetCount` → `target_chocolate_set_count`
+  - `TargetCandyCount` → `target_candy_count`
+  - `UpdatedAt` → `updated_at`
+
+### 생산 목표 조회·설정 REST API 구현
+
+- 관리자 웹에서 현재 생산 목표를 조회하고 수정할 수 있도록 `ProductionTargetsController`를 추가하였다.
+- 현재 목표 조회 API를 구현하였다.
+
+```text
+GET /api/production-targets/current
+```
+
+- `target_id = 1`인 현재 생산 목표를 조회하여 초콜릿 목표 세트 수, 사탕 목표 수량, 수정 시간을 반환하도록 구성하였다.
+- 생산 목표 설정 API를 구현하였다.
+
+```text
+PUT /api/production-targets/current
+```
+
+- 요청으로 전달받은 초콜릿 목표 세트 수와 사탕 목표 수량을 기존 `target_id = 1` 행에 반영하도록 구성하였다.
+- 목표 생산량이 음수인 경우 `400 Bad Request`를 반환하도록 검증 로직을 추가하였다.
+- 생산 목표 조회 및 수정 API가 정상 동작하는 것을 확인하였다.
+
+### 작업자 Qt 생산 시작 API 구조 수정
+
+- 작업자 Qt에서 사용하는 `POST /api/production-sessions/start` API의 구조를 수정하였다.
+- 기존 `ProductionSessionStartRequest` DTO를 통해 목표값을 전달하던 방식을 제거하였다.
+- 작업자 Qt는 생산 시작 시 Request Body를 전달하지 않도록 변경하였다.
+- 서버가 `production_targets`의 현재 목표값을 직접 조회하도록 구성하였다.
+- 조회한 목표값을 새로 생성되는 `production_sessions`에 복사하여 해당 생산 작업의 목표로 저장하도록 하였다.
+- 생산 시작 당시 복사된 목표값은 이후 관리자가 생산 목표를 변경해도 유지되도록 구성하였다.
+
+```text
+POST /api/production-sessions/start
+        ↓
+production_targets 조회
+        ↓
+현재 목표값 확인
+        ↓
+production_sessions 생성
+        ↓
+목표값 복사
+        ↓
+RUNNING
+```
+
+### 생산 시작 사용자 인증 오류 수정
+
+- 생산 시작 API에서 JWT 사용자 ID를 `"userId"` Claim 이름으로 직접 조회하면서 사용자 정보를 찾지 못하는 문제가 발생하였다.
+- 기존 `GetCurrentProduction()`과 동일하게 `ClaimTypes.NameIdentifier`를 이용해 사용자 ID를 조회하도록 수정하였다.
+
+```csharp
+var userIdValue = User.FindFirstValue(
+    ClaimTypes.NameIdentifier
+);
+```
+
+- 수정 후 작업자 JWT를 이용한 생산 시작 API가 정상 동작하는 것을 확인하였다.
+
+### 작업자 Qt REST API 흐름 정리
+
+- 작업자 Qt에서 사용하는 REST API의 역할을 실제 작업 흐름에 맞게 정리하였다.
+- 로그인 후 현재 진행 중인 작업이 있는지 확인하기 위해 현재 생산 작업 조회 API를 유지하였다.
+- Qt가 비정상 종료되거나 다시 실행되는 경우 서버에 남아 있는 `RUNNING` 또는 `PAUSED` 생산 세션을 확인할 수 있도록 하였다.
+
+```text
+POST /api/auth/login
+        ↓
+GET /api/production-sessions/current
+        ↓
+진행 중인 작업 존재
+→ 기존 생산 작업 사용
+
+진행 중인 작업 없음
+→ POST /api/production-sessions/start
+```
+
+- 로그아웃 시 별도의 로그아웃 API를 사용하지 않고 `PATCH /api/production-sessions/finish`를 호출하도록 정리하였다.
+- 생산 종료 후 Qt에 저장된 JWT를 제거하고 로그인 화면으로 이동하는 흐름으로 구성하였다.
+
+### 관리자 웹과 작업자 Qt REST API 역할 분리
+
+- 관리자 웹과 작업자 Qt에서 사용하는 REST API의 역할을 구분하였다.
+
+#### 관리자 웹
+
+- 로그인
+- 대시보드 조회
+- 최근 제품 감지 결과 조회
+- 알림 조회·확인·복구
+- 시스템 구성요소 상태 조회
+- 현재 생산 목표 조회
+- 생산 목표 설정
+
+#### 작업자 Qt
+
+- 로그인
+- 현재 생산 작업 조회
+- 생산 시작
+- 로그아웃 시 생산 종료
+
+- 관리자 웹은 모니터링 및 생산 목표 관리에 집중하고, 작업자 Qt는 실제 생산 작업의 시작과 종료를 담당하도록 역할을 정리하였다.
+
+### 생산 시작 MQTT Publish 유지
+
+- 생산 시작 API 구조 변경 이후에도 기존 `smart_sorting/production/status` MQTT Publish 기능을 유지하였다.
+- 새 생산 세션 생성 후 `RUNNING` 상태와 초기 생산 정보를 전달하도록 구성하였다.
+- 초콜릿 목표 수량은 목표 세트 수와 `unit_per_set`을 이용하여 낱개 수로 계산하도록 하였다.
+- 생산 시작 시 현재 생산량, 완료 세트 수, 진행률은 0으로 전달하도록 구성하였다.
+
+```text
+POST /api/production-sessions/start
+        ↓
+production_sessions 생성
+        ↓
+smart_sorting/production/status Publish
+```
+
+### 제품 분류 실패 시 VISION_MODULE MQTT 처리 수정
+
+- 제품 분류 실패 시 `VISION_MODULE`의 상태를 `ERROR`로 저장하는 기존 DB 처리 방식은 유지하였다.
+- 분류 실패와 연결된 `ERROR` 알림 생성 및 `smart_sorting/alert` MQTT Publish도 유지하였다.
+- 다만 제품 분류 실패를 실제 장비 상태 변경 메시지처럼 관리자 웹에 전달하지 않도록 `smart_sorting/component/status` MQTT Publish를 제거하였다.
+- `visionStatusChanged` 변수와 관련 상태 변경 확인 로직도 함께 제거하였다.
+
+```text
+제품 분류 FAILED
+        ↓
+product_detections FAILED 저장
+        ↓
+VISION_MODULE 상태 ERROR DB 저장
+        ↓
+ERROR 알림 DB 저장
+        ↓
+smart_sorting/alert Publish
+```
+
+- 제품 분류 실패에 따른 `VISION_MODULE` 상태는 DB에는 기록하지만, `smart_sorting/component/status` Topic으로는 전달하지 않도록 구조를 수정하였다.
+
+### VISION_MODULE 오류 처리 테스트
+
+- 제품 감지 실패 데이터를 이용하여 수정된 처리 흐름을 테스트하였다.
+- `product_detections`에 `FAILED` 결과가 정상 저장되는 것을 확인하였다.
+- `system_components`의 `VISION_MODULE` 상태가 `ERROR`로 정상 변경되는 것을 확인하였다.
+- 연결된 `ERROR` 알림이 DB에 정상 저장되는 것을 확인하였다.
+- `smart_sorting/alert` MQTT 메시지가 정상 전달되는 것을 확인하였다.
+- 제품 분류 실패 시 `smart_sorting/component/status` MQTT 메시지가 더 이상 전달되지 않는 것을 확인하였다.
+
+```text
+제품 감지 FAILED 저장               → 정상
+VISION_MODULE 상태 ERROR 저장       → 정상
+ERROR 알림 저장                     → 정상
+smart_sorting/alert Publish         → 정상
+smart_sorting/component/status      → Publish 안 함
+```
+
+---
+
 ## 현재 완료 상태
 
 - [x] 데이터베이스 생성 스크립트
-- [x] 6개 테이블 정의
+- [x] 7개 테이블 정의
 - [x] 기본 키·외래키·고유 키 정의
 - [x] NULL 허용 여부 정의
 - [x] CHECK 제약조건 정의
@@ -729,9 +953,17 @@ smart_sorting/component/status Publish
 - [x] ASP.NET Core Web API 프로젝트 생성
 - [x] MySQL 및 Entity Framework Core 연동
 - [x] Entity 모델 및 `AppDbContext` 작성
+- [x] `ProductionTarget` 모델 및 `production_targets` 매핑
 - [x] BCrypt 기반 로그인 API 구현
+- [x] 관리자 테스트 계정 BCrypt 해시 적용
 - [x] JWT 발급 및 인증 처리
+- [x] 관리자 웹 개발용 CORS 설정
+- [x] 생산 목표 조회 API
+- [x] 생산 목표 설정 API
+- [x] 생산 목표 조회·설정 API 개별 테스트
 - [x] 생산 작업 시작 API
+- [x] 생산 시작 시 DB의 현재 생산 목표 적용 구조 구현
+- [x] 생산 시작 API 사용자 Claim 조회 오류 수정
 - [x] 현재 생산 작업 조회 API
 - [x] 생산 작업 종료 API
 - [x] 생산 작업 종료 시 목표 달성 여부 판단
@@ -761,44 +993,65 @@ smart_sorting/component/status Publish
 - [x] MQTT 제품 감지 Topic 이름 정리
 - [x] 작업자 UI 통신 구조 큰 틀 정리
 - [x] 관리자 웹 통신 구조 큰 틀 정리
+- [x] 관리자 웹·작업자 Qt REST API 역할 분리
 - [x] 작업자·관리자 공통 MQTT Payload 구조 정리
 - [x] 서버 → 클라이언트 MQTT Publish 구현
 - [x] `smart_sorting/production/status` Publish 구현
 - [x] `smart_sorting/alert` Publish 구현
 - [x] `smart_sorting/component/status` Publish 구현
-- [x] 제품 분류 실패 시 `VISION_MODULE` `ERROR` 자동 변경
-- [x] 제품 분류 실패에 따른 `component/status` MQTT Publish
+- [x] 제품 분류 실패 시 `VISION_MODULE` `ERROR` DB 저장
+- [x] 제품 분류 실패 시 `smart_sorting/alert` MQTT Publish
+- [x] 제품 분류 실패에 따른 `component/status` MQTT Publish 제거
+- [x] 제품 분류 실패 MQTT 변경 사항 테스트
 - [x] 알림 복구 시 시스템 구성요소 상태 재계산
 - [x] 알림 복구에 따른 `component/status` MQTT Publish
 - [x] Mosquitto WebSocket `9001` Listener 구성
 - [x] 외부 네트워크에서 WebSocket 포트 연결 확인
 - [x] 수동 알림 생성 시 MQTT Publish 연동
-- [x] 생산 작업 시작·종료 시 `production/status` MQTT Publish 연동
-- [ ] 관리자 웹 MQTT WebSocket 연결 확인
-- [ ] 관리자 웹 MQTT 메시지 수신 확인
-- [ ] 관리자 대시보드 통계 API
+- [x] 생산 작업 시작·종료 시 `production/status` MQTT Publish 구현
+- [x] 관리자 대시보드 오늘 생산량 요약 API
+- [x] 관리자 대시보드 시간대별 생산량 추이 API
+- [x] 관리자 대시보드 제품 분류 비율 API
+- [x] 관리자 대시보드 최근 제품 감지 결과 API
+- [ ] 변경된 생산 시작 구조 전체 흐름 테스트
+- [ ] 관리자 웹 생산 목표 API 실제 화면 연동
+- [ ] 작업자 Qt REST API 실제 연동
+- [ ] 관리자 웹 실제 장비 `component/status` 연동 확인
 - [ ] 작업자 UI 라인 제어 MQTT 연동
-- [ ] Raspberry Pi 및 클라이언트 통합 테스트
+- [ ] Raspberry Pi 및 전체 클라이언트 통합 테스트
 
 ---
 
 ## 다음 작업
 
-1. 관리자 대시보드용 통계 API를 구현한다.
-    - 오늘 생산량 요약
-    - 시간대별 생산량 추이
-    - 제품 분류 비율
-    - 최근 제품 감지 결과 및 이미지
+1. 변경된 생산 목표·생산 시작 구조를 전체적으로 테스트한다.
+    - 관리자에서 생산 목표 설정
+    - `production_targets` 저장 확인
+    - 작업자 로그인
+    - 현재 생산 작업 조회
+    - Body 없이 생산 시작
+    - `production_targets`의 목표가 `production_sessions`에 복사되는지 확인
+    - 생산 시작 `production/status` MQTT 확인
+    - 생산 중 관리자 목표 변경
+    - 실행 중인 생산 세션의 기존 목표가 유지되는지 확인
+    - 로그아웃 시 생산 종료
+    - 다음 생산 시작부터 변경된 목표가 적용되는지 확인
 
-2. 관리자 웹에서 MQTT WebSocket 연결 및 실시간 메시지 수신을 확인한다.
-    - `smart_sorting/production/status`
-    - `smart_sorting/alert`
+2. 관리자 웹에 생산 목표 REST API를 실제 연결한다.
+    - `GET /api/production-targets/current`
+    - `PUT /api/production-targets/current`
+
+3. 작업자 Qt에 REST API를 실제 연결한다.
+    - `POST /api/auth/login`
+    - `GET /api/production-sessions/current`
+    - `POST /api/production-sessions/start`
+    - `PATCH /api/production-sessions/finish`
+
+4. 실제 장비 상태와 관리자 웹의 MQTT 연동을 확인한다.
     - `smart_sorting/component/status`
 
-3. 작업자 UI의 라인 제어 처리 구조를 장비 담당과 최종 확정하고 MQTT Topic을 연동한다.
+5. 작업자 UI의 라인 제어 MQTT를 연동한다.
     - `smart_sorting/line/control`
     - `smart_sorting/line/status`
 
-4. 작업자 UI와 관리자 웹에 실제 MQTT 데이터를 연결해 화면 반영을 확인한다.
-
-5. Raspberry Pi, 작업자 UI, 관리자 웹과 실제 통합 테스트를 진행한다.
+6. Raspberry Pi, 작업자 Qt, 관리자 웹, ASP.NET Core 서버, MQTT Broker를 연결하여 전체 시스템 통합 테스트를 진행한다.

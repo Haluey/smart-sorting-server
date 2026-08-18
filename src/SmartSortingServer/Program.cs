@@ -8,10 +8,24 @@ using System.Text;
 namespace SmartSortingServer {
     public class Program {
         public static void Main(string[] args) {
+            //Console.WriteLine(BCrypt.Net.BCrypt.HashPassword("1234"));
+
             var builder = WebApplication.CreateBuilder(args);
 
             // 서비스 등록
             builder.Services.AddControllers();
+
+            builder.Services.AddCors(options => {
+                options.AddPolicy("AllowAdminWeb", policy => {
+                    policy
+                        .WithOrigins(
+                            "http://127.0.0.1:5500",
+                            "http://localhost:5500"
+                        )
+                        .AllowAnyHeader()
+                        .AllowAnyMethod();
+                });
+            });
 
             builder.Services.AddScoped<ProductDetectionService>();
             builder.Services.AddSingleton<MqttPublisherService>();
@@ -87,6 +101,9 @@ namespace SmartSortingServer {
             if (!app.Environment.IsDevelopment()) {
                 app.UseHttpsRedirection();
             }
+
+            // CORS 처리
+            app.UseCors("AllowAdminWeb");
 
             // 사용자 인증 처리
             app.UseAuthentication();

@@ -2,7 +2,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SmartSortingServer.Data;
-using SmartSortingServer.DTOs;
 using SmartSortingServer.Models;
 using SmartSortingServer.Services;
 using System.Security.Claims;
@@ -22,7 +21,7 @@ namespace SmartSortingServer.Controllers {
 
         // 생산 작업 시작
         [HttpPost("start")]
-        public async Task<IActionResult> StartProduction (ProductionSessionStartRequest request) {
+        public async Task<IActionResult> StartProduction() {
             // JWT에서 로그인한 사용자 ID 가져오기
             var userIdValue = User.FindFirstValue(
                 ClaimTypes.NameIdentifier
@@ -34,37 +33,36 @@ namespace SmartSortingServer.Controllers {
                 });
             }
 
-            // 목표 수량 확인
-            if (
-                request.TargetChocolateSetCount < 0 ||
-                request.TargetCandyCount < 0
-            ) {
+            // 현재 진행 중인 생산 작업 조회
+            var runningSession = await _context.ProductionSessions
+                .Where(s =>
+                    s.Status == "RUNNING" ||
+                    s.Status == "PAUSED"
+                )
+                .OrderByDescending(s => s.StartedAt)
+                .FirstOrDefaultAsync();
+
+            if (runningSession != null) {
                 return BadRequest(new {
-                    message = "목표 수량은 0 이상이어야 합니다."
-                });
-            }
-
-            // 초콜릿과 사탕 목표가 모두 0이면 생산 시작 불가
-            if (
-                request.TargetChocolateSetCount == 0 &&
-                request.TargetCandyCount == 0
-            ) {
-                return BadRequest(new {
-                    message = "하나 이상의 목표 수량을 입력해야 합니다."
-                });
-            }
-
-            // 현재 진행 중인 생산 작업이 있는지 확인
-            bool hasActiveSession =
-                await _context.ProductionSessions
-                    .AnyAsync(s =>
-                        s.Status == "RUNNING" ||
-                        s.Status == "PAUSED"
-                    );
-
-            if (hasActiveSession) {
-                return Conflict(new {
                     message = "이미 진행 중인 생산 작업이 있습니다."
+                });
+            }
+
+            // 현재 생산 목표 조회
+            var target = await _context.ProductionTargets
+                .FirstOrDefaultAsync(t => t.TargetId == 1);
+
+            if (target == null) {
+                return BadRequest(new {
+                    message = "생산 목표가 설정되어 있지 않습니다."
+                });
+            }
+
+            // 생산 목표 유효성 확인
+            if (target.TargetChocolateSetCount <= 0 ||
+                target.TargetCandyCount <= 0) {
+                return BadRequest(new {
+                    message = "생산 목표를 확인해주세요."
                 });
             }
 
@@ -88,18 +86,13 @@ namespace SmartSortingServer.Controllers {
             // 새로운 생산 작업 생성
             var productionSession = new ProductionSession {
                 UserId = userId,
-
                 TargetChocolateSetCount =
-                    request.TargetChocolateSetCount,
-
+                    target.TargetChocolateSetCount,
                 TargetCandyCount =
-                    request.TargetCandyCount,
-
+                    target.TargetCandyCount,
                 ChocolateCount = 0,
                 CandyCount = 0,
-
                 Status = "RUNNING",
-
                 StartedAt = DateTime.Now,
                 UpdatedAt = DateTime.Now
             };
@@ -109,7 +102,7 @@ namespace SmartSortingServer.Controllers {
             await _context.SaveChangesAsync();
 
             // 초콜릿 목표 낱개 수
-            int chocolateTargetCount =
+            int targetChocolateCount =
                 productionSession.TargetChocolateSetCount
                 * chocolateType.UnitPerSet;
 
@@ -121,19 +114,32 @@ namespace SmartSortingServer.Controllers {
                     status = productionSession.Status,
 
                     chocolate = new {
-                        currentCount = 0,
-                        targetCount = chocolateTargetCount,
-                        unitPerSet = chocolateType.UnitPerSet,
+                        currentCount =
+                            productionSession.ChocolateCount,
+
+                        targetCount =
+                            targetChocolateCount,
+
+                        unitPerSet =
+                            chocolateType.UnitPerSet,
+
                         setCount = 0,
+
                         progress = 0
                     },
 
                     candy = new {
-                        currentCount = 0,
+                        currentCount =
+                            productionSession.CandyCount,
+
                         targetCount =
                             productionSession.TargetCandyCount,
-                        unitPerSet = candyType.UnitPerSet,
+
+                        unitPerSet =
+                            candyType.UnitPerSet,
+
                         setCount = 0,
+
                         progress = 0
                     }
                 }
@@ -147,8 +153,13 @@ namespace SmartSortingServer.Controllers {
                     productionSession.TargetChocolateSetCount,
                 targetCandyCount =
                     productionSession.TargetCandyCount,
+                chocolateCount =
+                    productionSession.ChocolateCount,
+                candyCount =
+                    productionSession.CandyCount,
                 status = productionSession.Status,
-                startedAt = productionSession.StartedAt
+                startedAt =
+                    productionSession.StartedAt
             });
         }
 

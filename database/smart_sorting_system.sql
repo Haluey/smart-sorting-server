@@ -525,3 +525,24 @@ UPDATE production_sessions
       ,ended_at = NOW() WHERE session_id = 2;
     
 ALTER TABLE production_sessions AUTO_INCREMENT = 3;
+
+UPDATE users
+SET password_hash = '$2a$11$w1I.A2g3AusRARbEFsk5LuZC/ArXFWvyyLsUQZyO4iOBWJIOerrja'
+WHERE login_id = 'admin01';
+
+DROP TABLE IF EXISTS production_targets;
+
+CREATE TABLE production_targets (
+    target_id INT PRIMARY KEY,
+    target_chocolate_set_count INT NOT NULL,
+    target_candy_count INT NOT NULL,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP
+);
+
+INSERT INTO production_targets (
+    target_id,
+    target_chocolate_set_count,
+    target_candy_count
+)
+VALUES (1, 10, 100);

@@ -27,6 +27,9 @@ namespace SmartSortingServer.Data {
         // alerts 테이블
         public DbSet<Alert> Alerts { get; set; } = null!;
 
+        // production_targets 테이블
+        public DbSet<ProductionTarget> ProductionTargets { get; set; } = null!;
+
         // C# 모델과 DB 테이블의 연결 규칙 설정
         protected override void OnModelCreating(ModelBuilder modelBuilder) {
             base.OnModelCreating(modelBuilder);
@@ -137,6 +140,31 @@ namespace SmartSortingServer.Data {
                 // component_code는 중복 불가
                 entity.HasIndex(e => e.ComponentCode)
                     .IsUnique();
+            });
+
+            // ProductionTarget 모델 ↔ production_targets 테이블
+            modelBuilder.Entity<ProductionTarget>(entity => {
+                entity.ToTable("production_targets");
+
+                // 기본키
+                entity.HasKey(e => e.TargetId);
+
+                entity.Property(e => e.TargetId)
+                    .HasColumnName("target_id");
+
+                // 초콜릿 목표 세트 수
+                entity.Property(e => e.TargetChocolateSetCount)
+                    .HasColumnName("target_chocolate_set_count")
+                    .IsRequired();
+
+                // 사탕 목표 수량
+                entity.Property(e => e.TargetCandyCount)
+                    .HasColumnName("target_candy_count")
+                    .IsRequired();
+
+                // 마지막 수정 일시
+                entity.Property(e => e.UpdatedAt)
+                    .HasColumnName("updated_at");
             });
 
             // ProductionSession 모델 ↔ production_sessions 테이블

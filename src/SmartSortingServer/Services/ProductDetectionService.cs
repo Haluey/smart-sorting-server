@@ -47,9 +47,6 @@ namespace SmartSortingServer.Services {
             // 이번 처리에서 생성된 알림
             Alert? createdAlert = null;
 
-            // VISION_MODULE 상태가 실제로 변경되었는지 확인
-            bool visionStatusChanged = false;
-
             // 분류 성공인 경우
             if (request.ClassificationStatus == "SUCCESS") {
 
@@ -214,13 +211,6 @@ namespace SmartSortingServer.Services {
 
                 // VISION_MODULE 상태 ERROR 변경
                 if (visionModule != null) {
-
-                    // 기존 상태가 ERROR가 아닌 경우
-                    // 실제 상태가 변경된 것으로 판단
-                    if (visionModule.CurrentStatus != "ERROR") {
-                        visionStatusChanged = true;
-                    }
-
                     visionModule.CurrentStatus = "ERROR";
                     visionModule.StatusUpdatedAt = DateTime.Now;
                 }
@@ -391,21 +381,6 @@ namespace SmartSortingServer.Services {
 
                         createdAt =
                             createdAlert.CreatedAt
-                    }
-                );
-            }
-
-            // -------------------------------------------------
-            // VISION_MODULE 상태 변경 MQTT Publish
-            // -------------------------------------------------
-
-            if (visionStatusChanged) {
-
-                await _mqttPublisher.PublishAsync(
-                    "smart_sorting/component/status",
-                    new {
-                        componentCode = "VISION_MODULE",
-                        status = "ERROR"
                     }
                 );
             }
