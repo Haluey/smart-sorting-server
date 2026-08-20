@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using NLog.Web;
 using SmartSortingServer.Data;
 using SmartSortingServer.Services;
 using System.Text;
@@ -11,6 +12,9 @@ namespace SmartSortingServer {
             //Console.WriteLine(BCrypt.Net.BCrypt.HashPassword("1234"));
 
             var builder = WebApplication.CreateBuilder(args);
+
+            builder.Logging.ClearProviders();
+            builder.Host.UseNLog();
 
             // 서비스 등록
             builder.Services.AddControllers();

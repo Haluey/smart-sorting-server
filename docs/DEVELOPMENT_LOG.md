@@ -938,6 +938,172 @@ smart_sorting/component/status      → Publish 안 함
 
 ---
 
+## 2026-08-19 — 생산 목표 구조 검증 및 서버 로그 출력 개선
+
+### 생산 목표 구조 통합 테스트
+
+- 전날 변경한 생산 목표 관리 구조와 생산 시작 흐름을 실제 REST API로 다시 확인하였다.
+- `production_targets`에 설정된 목표값이 생산 시작 시 새로운 `production_sessions`에 정상 복사되는 것을 확인하였다.
+- 생산 중 관리자가 목표값을 변경해도 현재 진행 중인 생산 세션의 목표값은 유지되는 것을 확인하였다.
+- 현재 생산 세션 종료 후 다음 생산 세션부터 변경된 목표값이 적용되는 것을 확인하였다.
+- 작업자 Qt가 생산 목표를 직접 전달하지 않고 서버에 저장된 현재 목표를 사용하는 구조가 정상 동작하는 것을 확인하였다.
+
+### 실제 장비 MQTT 연동 구조 정리
+
+- 실제 센서·장비와 ASP.NET Core 서버가 직접 맞춰야 하는 MQTT 통신 구조를 정리하였다.
+- 비전 제품 감지 결과는 기존 Topic을 유지하기로 하였다.
+
+```text
+smart_sorting/vision/product_detection
+```
+
+- 실제 장비 상태를 서버에 전달하기 위한 입력 Topic을 다음과 같이 정리하였다.
+
+```text
+smart_sorting/component/status/update
+```
+
+- 실제 장비 상태 Payload는 다음 구조를 기준으로 사용하기로 하였다.
+
+```json
+{
+  "componentCode": "CAMERA",
+  "status": "ERROR",
+  "message": "카메라 촬영에 실패했습니다."
+}
+```
+
+- Payload 필드 역할:
+  - `componentCode` → 필수
+  - `status` → 필수
+  - `message` → 선택
+- `message`는 `WARNING`, `ERROR`, `OFFLINE` 상태에서 실제 오류 내용을 `alerts.alert_message`에 저장할 수 있도록 전달하는 것을 권장하기로 하였다.
+
+### 실제 장비 상태와 알림 처리 기준 정리
+
+- 실제 장비 상태는 서버가 먼저 수신하여 `system_components`의 현재 상태를 갱신하도록 구조를 정리하였다.
+- 장비에서 이상 상태가 전달되면 `alerts`에도 관련 데이터를 저장하도록 기준을 정리하였다.
+
+```text
+NORMAL
+→ system_components 상태 갱신
+→ Alert 생성 안 함
+
+WARNING
+→ system_components = WARNING
+→ WARNING Alert 생성
+
+ERROR
+→ system_components = ERROR
+→ ERROR Alert 생성
+
+OFFLINE
+→ system_components = OFFLINE
+→ 필요 시 WARNING 또는 ERROR Alert 생성
+```
+
+- 서버에서 처리한 장비 상태와 알림은 기존 MQTT Topic을 이용하여 관리자 웹에 전달하도록 정리하였다.
+
+```text
+장비 → 서버
+smart_sorting/component/status/update
+
+서버 → 관리자 웹
+smart_sorting/component/status
+smart_sorting/alert
+```
+
+### 실제 장비 componentCode 정리
+
+- 실제 장비 상태 MQTT에서 사용할 주요 `componentCode`를 정리하였다.
+
+```text
+IR_SENSOR
+→ 적외선 센서
+
+CAMERA
+→ 카메라
+
+CONVEYOR
+→ 컨베이어
+
+SORTING_SERVO
+→ 분류 서보모터
+```
+
+- 작업자용 LCD는 `WORKER_DISPLAY`라는 `componentCode`를 사용하기로 결정하였다.
+- `WORKER_DISPLAY`는 아직 실제 `system_components` 데이터에 반영하지 않았다.
+- 장비에서 전달하는 `componentCode`는 서버 DB의 `system_components.component_code`와 동일한 값을 사용하도록 정리하였다.
+
+### NLog 적용 및 콘솔 로그 출력 개선
+
+- Visual Studio에서 서버 실행 시 EF Core SQL 로그와 ASP.NET Core 내부 로그가 과도하게 출력되는 문제를 개선하였다.
+- `appsettings.Development.json`에서 EF Core SQL Command 로그 수준을 `Warning`으로 조정하여 불필요한 SQL 로그 출력을 줄였다.
+- 서버 콘솔 로그를 간단하게 관리하기 위해 `NLog.Web.AspNetCore` 패키지를 설치하였다.
+- 프로젝트에 `nlog.config`를 추가하고 Console Target의 출력 형식을 `${message}`로 설정하였다.
+
+```xml
+<target xsi:type="Console"
+        name="console"
+        layout="${message}" />
+```
+
+- `Program.cs`에 NLog를 연결하였다.
+
+```csharp
+using NLog.Web;
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Logging.ClearProviders();
+builder.Host.UseNLog();
+```
+
+- 적용 후 기존 `info: Microsoft.Hosting.Lifetime[...]` 형식 대신 실제 메시지만 출력되도록 변경하였다.
+- 서버 실행 여부와 포트, 실행 환경을 확인하기 위해 ASP.NET Core 시작 로그는 유지하기로 하였다.
+
+```text
+Now listening on: https://localhost:5050
+Now listening on: http://0.0.0.0:5051
+Application started. Press Ctrl+C to shut down.
+Hosting environment: Development
+Content root path: C:\Workspace\smart-sorting-server\src\SmartSortingServer
+```
+
+### MQTT 연결 로그 출력 순서 개선
+
+- 기존에는 MQTT 연결 로그가 ASP.NET Core 시작 로그보다 먼저 출력되었다.
+- `MqttSubscriberService`에 `IHostApplicationLifetime`을 추가하고 `ApplicationStarted` 신호를 기다린 뒤 MQTT Broker에 연결하도록 수정하였다.
+- 임의의 대기 시간을 사용하지 않고 실제 서버 시작 완료 시점을 기준으로 MQTT 연결을 시작하도록 구성하였다.
+
+```csharp
+await WaitForApplicationStartedAsync(
+    stoppingToken
+);
+```
+
+- 수정 후 서버 시작 로그가 먼저 출력되고, 그 아래에 MQTT 연결 및 Topic 구독 로그가 출력되는 것을 확인하였다.
+
+```text
+Now listening on: https://localhost:5050
+Now listening on: http://0.0.0.0:5051
+Application started. Press Ctrl+C to shut down.
+Hosting environment: Development
+Content root path: C:\Workspace\smart-sorting-server\src\SmartSortingServer
+
+MQTT Broker 연결 성공
+MQTT Topic 구독 완료: smart_sorting/vision/product_detection
+```
+
+### 추가 로그 출력 문제 확인
+
+- REST API 호출 시 ASP.NET Core Routing, MVC, Endpoint 및 EF Core 내부 Information 로그가 다시 출력되는 것을 확인하였다.
+- `nlog.config`의 전체 Information 로그 출력 규칙이 원인으로 확인되었다.
+- `Microsoft.Hosting.Lifetime` 시작 로그는 유지하면서 내부 프레임워크 로그는 숨기도록 NLog Rule을 추가로 정리할 필요가 있다.
+- 해당 NLog Rule 수정은 아직 적용하지 않았다.
+
+---
+
 ## 현재 완료 상태
 
 - [x] 데이터베이스 생성 스크립트
@@ -950,17 +1116,20 @@ smart_sorting/component/status      → Publish 안 함
 - [x] 테스트용 더미 데이터
 - [x] DBeaver ERD
 - [x] ERDCloud ERD
+
 - [x] ASP.NET Core Web API 프로젝트 생성
 - [x] MySQL 및 Entity Framework Core 연동
 - [x] Entity 모델 및 `AppDbContext` 작성
 - [x] `ProductionTarget` 모델 및 `production_targets` 매핑
+
 - [x] BCrypt 기반 로그인 API 구현
 - [x] 관리자 테스트 계정 BCrypt 해시 적용
 - [x] JWT 발급 및 인증 처리
 - [x] 관리자 웹 개발용 CORS 설정
+
 - [x] 생산 목표 조회 API
 - [x] 생산 목표 설정 API
-- [x] 생산 목표 조회·설정 API 개별 테스트
+- [x] 생산 목표 조회·설정 API 테스트
 - [x] 생산 작업 시작 API
 - [x] 생산 시작 시 DB의 현재 생산 목표 적용 구조 구현
 - [x] 생산 시작 API 사용자 Claim 조회 오류 수정
@@ -968,11 +1137,18 @@ smart_sorting/component/status      → Publish 안 함
 - [x] 생산 작업 종료 API
 - [x] 생산 작업 종료 시 목표 달성 여부 판단
 - [x] 활성 생산 작업 중복 생성 방지
+- [x] 변경된 생산 목표·생산 시작 구조 전체 흐름 테스트
+- [x] 생산 중 목표 변경 시 현재 생산 세션 목표 유지 확인
+- [x] 다음 생산 세션부터 변경된 목표 적용 확인
+
 - [x] 제품 감지 결과 저장 API
 - [x] 제품 분류 성공·실패 검증
 - [x] 초콜릿·사탕 생산 수량 갱신 로직
+- [x] 제품 감지 처리 로직 `ProductDetectionService` 분리
+
 - [x] 시스템 구성요소 상태 조회 API
 - [x] 시스템 구성요소 상태 변경 API
+
 - [x] 알림 생성 API
 - [x] 알림 조회 API
 - [x] 알림 확인 처리 API
@@ -984,17 +1160,19 @@ smart_sorting/component/status      → Publish 안 함
 - [x] 동일 구성요소의 미복구 알림을 고려한 상태 복구 처리
 - [x] 제품 분류 실패 시 자동 `ERROR` 알림 생성
 - [x] 초콜릿 세트 완료 시 `INFO` 알림 생성
-- [x] 제품 감지 처리 로직 `ProductDetectionService` 분리
+
 - [x] 외부 HTTP API 접속 확인
 - [x] Mosquitto 외부 접속 확인
 - [x] MQTT Broker와 ASP.NET Core 서버 연결
 - [x] MQTT 제품 감지 Subscribe 구현
 - [x] MQTT 제품 감지 결과 DB 저장 및 생산량 갱신 테스트
 - [x] MQTT 제품 감지 Topic 이름 정리
+
 - [x] 작업자 UI 통신 구조 큰 틀 정리
 - [x] 관리자 웹 통신 구조 큰 틀 정리
 - [x] 관리자 웹·작업자 Qt REST API 역할 분리
 - [x] 작업자·관리자 공통 MQTT Payload 구조 정리
+
 - [x] 서버 → 클라이언트 MQTT Publish 구현
 - [x] `smart_sorting/production/status` Publish 구현
 - [x] `smart_sorting/alert` Publish 구현
@@ -1005,15 +1183,45 @@ smart_sorting/component/status      → Publish 안 함
 - [x] 제품 분류 실패 MQTT 변경 사항 테스트
 - [x] 알림 복구 시 시스템 구성요소 상태 재계산
 - [x] 알림 복구에 따른 `component/status` MQTT Publish
-- [x] Mosquitto WebSocket `9001` Listener 구성
-- [x] 외부 네트워크에서 WebSocket 포트 연결 확인
 - [x] 수동 알림 생성 시 MQTT Publish 연동
 - [x] 생산 작업 시작·종료 시 `production/status` MQTT Publish 구현
+
+- [x] Mosquitto WebSocket `9001` Listener 구성
+- [x] 외부 네트워크에서 WebSocket 포트 연결 확인
+
 - [x] 관리자 대시보드 오늘 생산량 요약 API
 - [x] 관리자 대시보드 시간대별 생산량 추이 API
 - [x] 관리자 대시보드 제품 분류 비율 API
 - [x] 관리자 대시보드 최근 제품 감지 결과 API
-- [ ] 변경된 생산 시작 구조 전체 흐름 테스트
+
+- [x] 실제 장비 → 서버 상태 MQTT Topic 구조 정리
+- [x] `smart_sorting/component/status/update` Topic 사용 결정
+- [x] 실제 장비 상태 MQTT Payload 구조 정리
+- [x] `componentCode`, `status`, `message` 필드 기준 정리
+- [x] 실제 장비 상태와 `system_components` 연동 기준 정리
+- [x] 장비 이상 상태와 `alerts` 연동 기준 정리
+- [x] 실제 장비용 주요 `componentCode` 정리
+- [x] 작업자 LCD용 `WORKER_DISPLAY` componentCode 사용 결정
+
+- [x] EF Core SQL 로그 출력 축소
+- [x] `NLog.Web.AspNetCore` 설치
+- [x] `nlog.config` 추가
+- [x] NLog Console 출력 형식 `${message}` 적용
+- [x] ASP.NET Core 시작 로그 출력 형식 간소화
+- [x] 불필요한 Data Protection Information 로그 제거
+- [x] `IHostApplicationLifetime`을 이용한 MQTT 연결 시작 시점 조정
+- [x] 서버 시작 로그 이후 MQTT 연결 로그 출력 확인
+
+- [ ] `system_components`에 `WORKER_DISPLAY` 실제 반영
+- [ ] ASP.NET Core·EF Core 내부 로그 NLog Rule 정리
+- [ ] 서버 업무 로그 추가
+- [ ] `smart_sorting/component/status/update` Subscribe 구현
+- [ ] 실제 장비 상태 수신 시 `system_components` DB 갱신 구현
+- [ ] 실제 장비 `WARNING / ERROR / OFFLINE` 수신 시 Alert 생성 구현
+- [ ] 실제 장비 상태 처리 후 `component/status` MQTT Publish 연동
+- [ ] 실제 장비 Alert 생성 후 `alert` MQTT Publish 연동
+- [ ] 실제 장비 상태 MQTT 처리 테스트
+
 - [ ] 관리자 웹 생산 목표 API 실제 화면 연동
 - [ ] 작업자 Qt REST API 실제 연동
 - [ ] 관리자 웹 실제 장비 `component/status` 연동 확인
@@ -1024,34 +1232,54 @@ smart_sorting/component/status      → Publish 안 함
 
 ## 다음 작업
 
-1. 변경된 생산 목표·생산 시작 구조를 전체적으로 테스트한다.
-    - 관리자에서 생산 목표 설정
-    - `production_targets` 저장 확인
-    - 작업자 로그인
-    - 현재 생산 작업 조회
-    - Body 없이 생산 시작
-    - `production_targets`의 목표가 `production_sessions`에 복사되는지 확인
-    - 생산 시작 `production/status` MQTT 확인
-    - 생산 중 관리자 목표 변경
-    - 실행 중인 생산 세션의 기존 목표가 유지되는지 확인
-    - 로그아웃 시 생산 종료
-    - 다음 생산 시작부터 변경된 목표가 적용되는지 확인
+1. `nlog.config`의 Rule을 정리한다.
+    - `Microsoft.Hosting.Lifetime` 시작 로그 유지
+    - ASP.NET Core Routing / MVC / Endpoint Information 로그 숨김
+    - EF Core 내부 Information 로그 숨김
+    - 서버에서 직접 작성한 업무 로그 표시
 
-2. 관리자 웹에 생산 목표 REST API를 실제 연결한다.
-    - `GET /api/production-targets/current`
-    - `PUT /api/production-targets/current`
+2. 서버 업무 로그를 추가한다.
+    - 로그인
+    - 생산 목표 변경
+    - 생산 시작·종료
+    - 제품 감지 성공·실패
+    - 장비 상태 변경
+    - 알림 생성
+    - MQTT 연결·수신·Publish
 
-3. 작업자 Qt에 REST API를 실제 연결한다.
-    - `POST /api/auth/login`
-    - `GET /api/production-sessions/current`
-    - `POST /api/production-sessions/start`
-    - `PATCH /api/production-sessions/finish`
+3. 작업자 LCD용 `WORKER_DISPLAY`를 `system_components`에 실제 반영한다.
 
-4. 실제 장비 상태와 관리자 웹의 MQTT 연동을 확인한다.
+4. 실제 장비 상태 MQTT Subscribe를 구현한다.
+    - Topic: `smart_sorting/component/status/update`
+    - `componentCode` 검증
+    - `status` 검증
+    - `message` 처리
+
+5. 실제 장비 상태 수신 처리 로직을 구현한다.
+    - `system_components.current_status` 갱신
+    - `status_updated_at` 갱신
+    - `NORMAL`은 상태만 갱신
+    - `WARNING`은 WARNING Alert 생성
+    - `ERROR`는 ERROR Alert 생성
+    - `OFFLINE` 알림 처리 기준 적용
+
+6. 실제 장비 상태 처리 결과를 MQTT로 전달한다.
     - `smart_sorting/component/status`
+    - `smart_sorting/alert`
 
-5. 작업자 UI의 라인 제어 MQTT를 연동한다.
-    - `smart_sorting/line/control`
-    - `smart_sorting/line/status`
+7. MQTT Explorer를 이용하여 실제 장비 상태 처리 흐름을 테스트한다.
+    - `NORMAL`
+    - `WARNING`
+    - `ERROR`
+    - `OFFLINE`
+    - DB 상태 변경 확인
+    - Alert 생성 확인
+    - MQTT Publish 확인
 
-6. Raspberry Pi, 작업자 Qt, 관리자 웹, ASP.NET Core 서버, MQTT Broker를 연결하여 전체 시스템 통합 테스트를 진행한다.
+8. 서버 기능이 완료되면 각 담당자가 실제 클라이언트와 연동한다.
+    - 관리자 웹 생산 목표 API 연동
+    - 관리자 웹 장비 상태 MQTT 연동
+    - 작업자 Qt REST API 연동
+    - 작업자 UI 라인 제어 MQTT 연동
+
+9. Raspberry Pi, 작업자 Qt, 관리자 웹, ASP.NET Core 서버, MQTT Broker를 연결하여 전체 시스템 통합 테스트를 진행한다.

@@ -7,16 +7,24 @@ using SmartSortingServer.DTOs;
 namespace SmartSortingServer.Services {
     public class MqttSubscriberService : BackgroundService {
         private readonly IServiceScopeFactory _scopeFactory;
+        private readonly IHostApplicationLifetime _appLifetime;
         private IMqttClient? _mqttClient;
 
         public MqttSubscriberService(
-            IServiceScopeFactory scopeFactory) {
+            IServiceScopeFactory scopeFactory,
+            IHostApplicationLifetime appLifetime) {
 
             _scopeFactory = scopeFactory;
+            _appLifetime = appLifetime;
         }
 
         protected override async Task ExecuteAsync(
             CancellationToken stoppingToken) {
+
+            // ASP.NET Core 서버 시작 완료 대기
+            await WaitForApplicationStartedAsync(
+                stoppingToken
+            );
 
             // MQTT Client 생성
             var mqttFactory = new MqttClientFactory();
@@ -33,7 +41,7 @@ namespace SmartSortingServer.Services {
 
             // MQTT 연결 성공 이벤트
             _mqttClient.ConnectedAsync += async e => {
-
+                Console.WriteLine();
                 Console.WriteLine("MQTT Broker 연결 성공");
 
                 // 제품 감지 토픽 구독
@@ -117,6 +125,31 @@ namespace SmartSortingServer.Services {
             }
         }
 
+        // ASP.NET Core 서버 시작 완료 대기
+        private async Task WaitForApplicationStartedAsync(
+            CancellationToken stoppingToken) {
+
+            if (_appLifetime.ApplicationStarted.IsCancellationRequested) {
+                return;
+            }
+
+            var startedTask = Task.Delay(
+                Timeout.Infinite,
+                _appLifetime.ApplicationStarted
+            );
+
+            var stoppingTask = Task.Delay(
+                Timeout.Infinite,
+                stoppingToken
+            );
+
+            await Task.WhenAny(
+                startedTask,
+                stoppingTask
+            );
+
+            stoppingToken.ThrowIfCancellationRequested();
+        }
 
         // 제품 감지 MQTT 메시지 처리
         private async Task HandleProductDetectionAsync(
