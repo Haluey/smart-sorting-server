@@ -13,10 +13,16 @@ namespace SmartSortingServer.Controllers {
     public class ProductionSessionsController : ControllerBase {
         private readonly AppDbContext _context;
         private readonly MqttPublisherService _mqttPublisher;
+        private readonly ILogger<ProductionSessionsController> _logger;
 
-        public ProductionSessionsController (AppDbContext context, MqttPublisherService mqttPublisher) {
+        public ProductionSessionsController(
+            AppDbContext context,
+            MqttPublisherService mqttPublisher,
+            ILogger<ProductionSessionsController> logger
+        ) {
             _context = context;
             _mqttPublisher = mqttPublisher;
+            _logger = logger;
         }
 
         // 생산 작업 시작
@@ -100,6 +106,13 @@ namespace SmartSortingServer.Controllers {
             _context.ProductionSessions.Add(productionSession);
 
             await _context.SaveChangesAsync();
+
+            // 생산 작업 시작 로그
+            _logger.LogInformation(
+                "[SESSION] 생산 작업 시작 - SessionId: {SessionId}, UserId: {UserId}",
+                productionSession.SessionId,
+                productionSession.UserId
+            );
 
             // 초콜릿 목표 낱개 수
             int targetChocolateCount =
@@ -274,6 +287,13 @@ namespace SmartSortingServer.Controllers {
             productionSession.UpdatedAt = DateTime.Now;
 
             await _context.SaveChangesAsync();
+
+            // 생산 작업 종료 로그
+            _logger.LogInformation(
+                "[SESSION] 생산 작업 종료 - SessionId: {SessionId}, Status: {Status}",
+                productionSession.SessionId,
+                productionSession.Status
+            );
 
             // 현재 세트 수
             int chocolateSetCount =

@@ -10,9 +10,14 @@ namespace SmartSortingServer.Controllers {
     public class ProductionTargetsController : ControllerBase {
         
         private readonly AppDbContext _context;
+        private readonly ILogger<ProductionTargetsController> _logger;
 
-        public ProductionTargetsController(AppDbContext context) {
+        public ProductionTargetsController(
+            AppDbContext context,
+            ILogger<ProductionTargetsController> logger
+        ) {
             _context = context;
+            _logger = logger;
         }
 
         // 현재 생산 목표 조회
@@ -39,9 +44,9 @@ namespace SmartSortingServer.Controllers {
         public async Task<IActionResult> UpdateCurrentTarget(
             [FromBody] UpdateProductionTargetRequest request
         ) {
-            if (request.TargetChocolateSetCount < 0 || request.TargetCandyCount < 0) {
+            if (request.TargetChocolateSetCount <= 0 || request.TargetCandyCount <= 0) {
                 return BadRequest(new {
-                    message = "목표 생산량은 0 이상이어야 합니다."
+                    message = "목표 생산량은 1 이상이어야 합니다."
                 });
             }
 
@@ -59,6 +64,13 @@ namespace SmartSortingServer.Controllers {
             target.UpdatedAt = DateTime.Now;
 
             await _context.SaveChangesAsync();
+
+            // 생산 목표 변경 로그
+            _logger.LogInformation(
+                "[TARGET] 생산 목표 변경 - ChocolateSet: {ChocolateSet}, Candy: {Candy}",
+                target.TargetChocolateSetCount,
+                target.TargetCandyCount
+            );
 
             return Ok(new {
                 message = "생산 목표가 설정되었습니다.",

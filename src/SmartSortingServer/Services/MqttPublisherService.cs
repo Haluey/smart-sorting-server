@@ -5,8 +5,13 @@ namespace SmartSortingServer.Services {
     public class MqttPublisherService {
         private readonly IMqttClient _mqttClient;
         private readonly MqttClientOptions _mqttClientOptions;
+        private readonly ILogger<MqttPublisherService> _logger;
 
-        public MqttPublisherService() {
+        public MqttPublisherService(
+            ILogger<MqttPublisherService> logger) {
+
+            _logger = logger;
+
             var mqttFactory = new MqttClientFactory();
 
             _mqttClient = mqttFactory.CreateMqttClient();
@@ -47,11 +52,11 @@ namespace SmartSortingServer.Services {
                 CancellationToken.None
             );
 
-            Console.WriteLine(
-                $"MQTT Publish [{topic}]"
+            // MQTT Publish 로그
+            _logger.LogInformation(
+                "[MQTT] Publish - Topic: {Topic}",
+                topic
             );
-
-            Console.WriteLine(json);
         }
     }
 }

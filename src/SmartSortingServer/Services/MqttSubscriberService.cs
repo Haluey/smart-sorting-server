@@ -8,14 +8,17 @@ namespace SmartSortingServer.Services {
     public class MqttSubscriberService : BackgroundService {
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly IHostApplicationLifetime _appLifetime;
+        private readonly ILogger<MqttSubscriberService> _logger;
         private IMqttClient? _mqttClient;
 
         public MqttSubscriberService(
             IServiceScopeFactory scopeFactory,
-            IHostApplicationLifetime appLifetime) {
+            IHostApplicationLifetime appLifetime,
+            ILogger<MqttSubscriberService> logger) {
 
             _scopeFactory = scopeFactory;
             _appLifetime = appLifetime;
+            _logger = logger;
         }
 
         protected override async Task ExecuteAsync(
@@ -68,6 +71,8 @@ namespace SmartSortingServer.Services {
                     "MQTT Topic 구독 완료: " +
                     "smart_sorting/vision/product_detection"
                 );
+
+                Console.WriteLine();
             };
 
 
@@ -81,12 +86,10 @@ namespace SmartSortingServer.Services {
                 string payload =
                     e.ApplicationMessage.ConvertPayloadToString();
 
-                Console.WriteLine(
-                    $"MQTT 메시지 수신 [{topic}]"
+                _logger.LogInformation(
+                    "[MQTT] Receive - Topic: {Topic}",
+                    topic
                 );
-
-                Console.WriteLine(payload);
-
 
                 // 제품 감지 토픽 처리
                 if (topic ==
@@ -191,11 +194,6 @@ namespace SmartSortingServer.Services {
                             request
                         );
 
-
-                Console.WriteLine(
-                    $"제품 감지 저장 완료: " +
-                    $"{result.ProductDetectionId}"
-                );
             }
             catch (Exception ex) {
                 Console.WriteLine(

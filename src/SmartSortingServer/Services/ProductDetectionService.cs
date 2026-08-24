@@ -7,13 +7,16 @@ namespace SmartSortingServer.Services {
     public class ProductDetectionService {
         private readonly AppDbContext _context;
         private readonly MqttPublisherService _mqttPublisher;
+        private readonly ILogger<ProductDetectionService> _logger;
 
         public ProductDetectionService(
             AppDbContext context,
-            MqttPublisherService mqttPublisher) {
+            MqttPublisherService mqttPublisher,
+            ILogger<ProductDetectionService> logger) {
 
             _context = context;
             _mqttPublisher = mqttPublisher;
+            _logger = logger;
         }
 
         public async Task<ProductDetection> CreateProductDetectionAsync(
@@ -218,6 +221,25 @@ namespace SmartSortingServer.Services {
 
             // 수량, 알림, 상태 변경 저장
             await _context.SaveChangesAsync();
+
+            if (request.ClassificationStatus == "SUCCESS"
+                && productType != null) {
+
+                _logger.LogInformation(
+                    "[DETECTION] 제품 분류 성공 - DetectionId: {DetectionId}, ProductType: {ProductType}, Confidence: {Confidence}",
+                    productDetection.ProductDetectionId,
+                    productType.ProductTypeCode,
+                    productDetection.Confidence
+                );
+            }
+
+            if (request.ClassificationStatus == "FAILED") {
+
+                _logger.LogError(
+                    "[DETECTION] 제품 분류 실패 - DetectionId: {DetectionId}",
+                    productDetection.ProductDetectionId
+                );
+            }
 
             // -------------------------------------------------
             // 생산 현황 MQTT Publish

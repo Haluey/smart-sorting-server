@@ -14,13 +14,16 @@ namespace SmartSortingServer.Controllers {
     public class AuthController : ControllerBase {
         private readonly AppDbContext _context;
         private readonly IConfiguration _configuration;
+        private readonly ILogger<AuthController> _logger;
 
         public AuthController(
             AppDbContext context,
-            IConfiguration configuration
+            IConfiguration configuration,
+            ILogger<AuthController> logger
         ) {
             _context = context;
             _configuration = configuration;
+            _logger = logger;
         }
 
         // 로그인
@@ -92,6 +95,12 @@ namespace SmartSortingServer.Controllers {
             // JWT 문자열 생성
             var tokenHandler = new JsonWebTokenHandler();
             var token = tokenHandler.CreateToken(tokenDescriptor);
+
+            // 로그인 성공 로그
+            _logger.LogInformation(
+                "[LOGIN] {LoginId} 로그인 성공",
+                user.LoginId
+            );
 
             // 로그인 성공
             return Ok(new {
