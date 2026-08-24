@@ -14,10 +14,16 @@ namespace SmartSortingServer.Controllers {
     public class AlertsController : ControllerBase {
         private readonly AppDbContext _context;
         private readonly MqttPublisherService _mqttPublisher;
+        private readonly ILogger<AlertsController> _logger;
 
-        public AlertsController(AppDbContext context, MqttPublisherService mqttPublisher) {
+        public AlertsController(
+            AppDbContext context,
+            MqttPublisherService mqttPublisher,
+            ILogger<AlertsController> logger) {
+
             _context = context;
             _mqttPublisher = mqttPublisher;
+            _logger = logger;
         }
 
         // 알림 전체 조회
@@ -206,6 +212,15 @@ namespace SmartSortingServer.Controllers {
 
             await _context.SaveChangesAsync();
 
+            // 알림 생성 로그
+            _logger.LogInformation(
+                "[ALERT] 알림 생성 - AlertId: {AlertId}, Type: {AlertType}, Priority: {Priority}, Component: {ComponentCode}",
+                alert.AlertId,
+                alert.AlertType,
+                alert.Priority,
+                component.ComponentCode
+            );
+
             // 신규 알림 MQTT Publish
             await _mqttPublisher.PublishAsync(
                 "smart_sorting/alert",
@@ -221,6 +236,13 @@ namespace SmartSortingServer.Controllers {
 
             // 구성요소 상태가 실제로 변경된 경우 MQTT Publish
             if (previousComponentStatus != component.CurrentStatus) {
+
+                _logger.LogInformation(
+                    "[COMPONENT] 상태 변경 - Component: {ComponentCode}, {PreviousStatus} -> {CurrentStatus}",
+                    component.ComponentCode,
+                    previousComponentStatus,
+                    component.CurrentStatus
+                );
 
                 await _mqttPublisher.PublishAsync(
                     "smart_sorting/component/status",
@@ -295,6 +317,13 @@ namespace SmartSortingServer.Controllers {
 
             await _context.SaveChangesAsync();
 
+            // 알림 확인 로그
+            _logger.LogInformation(
+                "[ALERT] 알림 확인 - AlertId: {AlertId}, UserId: {UserId}",
+                alert.AlertId,
+                userId
+            );
+
             return Ok(new {
                 message = "알림이 확인 처리되었습니다.",
                 alertId = alert.AlertId,
@@ -340,6 +369,7 @@ namespace SmartSortingServer.Controllers {
 
             string? changedComponentCode = null;
             string? changedComponentStatus = null;
+            string? previousComponentStatus = null;
 
             // 연결된 시스템 구성요소가 있는 경우
             if (alert.ComponentId != null) {
@@ -388,6 +418,9 @@ namespace SmartSortingServer.Controllers {
                     // 실제 상태가 변경된 경우에만 MQTT 전송 대상 저장
                     if (previousStatus != component.CurrentStatus) {
 
+                        previousComponentStatus =
+                            previousStatus;
+
                         changedComponentCode =
                             component.ComponentCode;
 
@@ -399,18 +432,29 @@ namespace SmartSortingServer.Controllers {
 
             await _context.SaveChangesAsync();
 
+            // 알림 복구 로그
+            _logger.LogInformation(
+                "[ALERT] 알림 복구 - AlertId: {AlertId}",
+                alert.AlertId
+            );
+
             // 장비 상태가 실제로 변경된 경우 MQTT Publish
             if (changedComponentCode != null
-                && changedComponentStatus != null) {
+                && changedComponentStatus != null
+                && previousComponentStatus != null) {
+
+                _logger.LogInformation(
+                    "[COMPONENT] 상태 변경 - Component: {ComponentCode}, {PreviousStatus} -> {CurrentStatus}",
+                    changedComponentCode,
+                    previousComponentStatus,
+                    changedComponentStatus
+                );
 
                 await _mqttPublisher.PublishAsync(
                     "smart_sorting/component/status",
                     new {
-                        componentCode =
-                            changedComponentCode,
-
-                        status =
-                            changedComponentStatus
+                        componentCode = changedComponentCode,
+                        status = changedComponentStatus
                     }
                 );
             }

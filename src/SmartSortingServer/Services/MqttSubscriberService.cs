@@ -1,5 +1,4 @@
-﻿using System.Text;
-using System.Text.Json;
+﻿using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using MQTTnet;
 using SmartSortingServer.DTOs;
@@ -110,8 +109,9 @@ namespace SmartSortingServer.Services {
                 );
             }
             catch (Exception ex) {
-                Console.WriteLine(
-                    $"MQTT 연결 실패: {ex.Message}"
+                _logger.LogError(
+                    "[MQTT] Broker 연결 실패 - {Message}",
+                    ex.Message
                 );
             }
 
@@ -169,8 +169,8 @@ namespace SmartSortingServer.Services {
                         );
 
                 if (request == null) {
-                    Console.WriteLine(
-                        "MQTT 제품 감지 데이터 변환 실패"
+                    _logger.LogError(
+                        "[MQTT] 제품 감지 데이터 변환 실패"
                     );
 
                     return;
@@ -188,17 +188,16 @@ namespace SmartSortingServer.Services {
                         >();
 
 
-                var result =
-                    await productDetectionService
-                        .CreateProductDetectionAsync(
-                            request
-                        );
+                await productDetectionService
+                    .CreateProductDetectionAsync(
+                        request
+                    );
 
             }
             catch (Exception ex) {
-                Console.WriteLine(
-                    $"MQTT 제품 감지 처리 실패: " +
-                    $"{ex.Message}"
+                _logger.LogError(
+                    "[MQTT] 제품 감지 처리 실패 - {Message}",
+                    ex.Message
                 );
             }
         }

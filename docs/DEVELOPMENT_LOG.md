@@ -1104,6 +1104,183 @@ MQTT Topic 구독 완료: smart_sorting/vision/product_detection
 
 ---
 
+## 2026-08-24
+
+### 서버 로그 구조 정리
+
+- NLog 설정을 정리하여 ASP.NET Core 및 EF Core의 불필요한 `Information` 로그를 숨기도록 수정
+- 서버에서 직접 작성한 업무 로그만 콘솔에서 확인할 수 있도록 구성
+- 콘솔 로그 형식은 `${message}`를 유지하여 불필요한 시간 및 로그 레벨 표시는 제외
+- 업무 영역별 로그 Prefix를 통일
+
+```text
+[LOGIN]
+[TARGET]
+[SESSION]
+[DETECTION]
+[ALERT]
+[COMPONENT]
+[MQTT]
+```
+
+### 로그인 로그 추가
+
+- 로그인 성공 시 사용자 로그인 ID를 로그로 출력
+
+```text
+[LOGIN] 2601 로그인 성공
+```
+
+### 생산 목표 변경 로그 추가
+
+- 생산 목표 변경 완료 후 초콜릿 세트 수와 사탕 목표 수량을 로그로 출력
+- 생산 목표가 0 이하인 경우 저장되지 않도록 검증 조건 수정
+
+```text
+[TARGET] 생산 목표 변경 - ChocolateSet: 10, Candy: 100
+```
+
+### 생산 작업 로그 추가
+
+- 생산 작업 시작 시 `SessionId`, `UserId` 출력
+- 생산 작업 종료 시 `SessionId`, 최종 상태 출력
+
+```text
+[SESSION] 생산 작업 시작 - SessionId: 20, UserId: 2
+[SESSION] 생산 작업 종료 - SessionId: 20, Status: CANCELLED
+```
+
+### 제품 분류 로그 추가
+
+- 제품 분류 성공 시 `DetectionId`, 제품 유형, Confidence 출력
+- 제품 분류 실패 시 `LogError()` 사용
+- 성공/실패 모두 `[DETECTION]` Prefix로 통일
+
+```text
+[DETECTION] 제품 분류 성공 - DetectionId: 107, ProductType: CHOCOLATE, Confidence: 0.95
+[DETECTION] 제품 분류 실패 - DetectionId: 108
+```
+
+### MQTT 로그 정리
+
+- MQTT Publish 시 전체 Payload 출력을 제거하고 Topic만 출력하도록 수정
+- MQTT Receive 시 전체 Payload 출력을 제거하고 Topic만 출력하도록 수정
+- MQTT 연결 실패, 데이터 변환 실패, 제품 감지 처리 실패 로그를 `ILogger` 기반으로 변경
+- 제품 감지 저장 완료 로그는 `[DETECTION]` 로그와 중복되어 제거
+- MQTT Broker 연결 성공 및 Topic 구독 완료 메시지는 서버 시작 상태 확인용으로 유지
+
+```text
+[MQTT] Receive - Topic: smart_sorting/vision/product_detection
+[MQTT] Publish - Topic: smart_sorting/production/status
+[MQTT] Publish - Topic: smart_sorting/alert
+[MQTT] Publish - Topic: smart_sorting/component/status
+```
+
+### 알림 로그 추가
+
+- 알림 생성 시 `AlertId`, 알림 유형, 우선순위, 구성요소 코드 출력
+- 알림 확인 처리 시 `AlertId`, 확인 사용자 ID 출력
+- 알림 복구 처리 시 `AlertId` 출력
+
+```text
+[ALERT] 알림 생성 - AlertId: 38, Type: ERROR, Priority: MEDIUM, Component: VISION_MODULE
+[ALERT] 알림 확인 - AlertId: 38, UserId: 2
+[ALERT] 알림 복구 - AlertId: 38
+```
+
+### 시스템 구성요소 상태 변경 로그 추가
+
+- `SystemComponentsController`에서 장비 상태가 실제로 변경된 경우에만 `[COMPONENT]` 로그 출력
+- 알림 생성으로 인해 장비 상태가 변경되는 경우에도 `[COMPONENT]` 로그 출력
+- 알림 복구로 인해 장비 상태가 변경되는 경우에도 `[COMPONENT]` 로그 출력
+- 상태가 동일한 경우에는 MQTT `component/status`를 Publish하지 않도록 기존 조건 유지
+
+```text
+[COMPONENT] 상태 변경 - Component: VISION_MODULE, NORMAL -> ERROR
+[COMPONENT] 상태 변경 - Component: VISION_MODULE, ERROR -> NORMAL
+```
+
+### 알림 생성/확인/복구 동작 테스트
+
+- ERROR 알림 생성 시 `alerts` 저장 및 `[ALERT]` 로그 확인
+- 구성요소 상태가 `NORMAL -> ERROR`로 변경되는 경우 `component/status` MQTT Publish 확인
+- 알림 확인 처리 시 `CHECKED` 상태 및 확인 사용자 정보 저장 확인
+- 알림 복구 처리 시 같은 장비의 미복구 ERROR/WARNING 존재 여부를 확인한 뒤 구성요소 상태 재계산
+- 미복구 알림이 없는 경우 `ERROR -> NORMAL` 복구 및 MQTT Publish 확인
+
+### 제어부 MQTT 메시지 규격 검토
+
+제어부에서 전달한 MQTT 규격을 검토하였다.
+
+#### 제품 분류 결과 Topic
+
+```text
+smart_sorting/vision/product_detection
+```
+
+- 제품 단위의 분류 결과를 전달
+- `SUCCESS` / `FAILED`, 제품 종류, Confidence, 이미지 경로 사용
+- 제품 처리 중 장비 오류가 발생한 경우 해당 제품의 처리 결과는 `FAILED`가 될 수 있음
+
+#### 구성요소 상태 Topic
+
+```text
+smart_sorting/component/status/update
+```
+
+- 장비 및 통신 상태를 별도로 전달
+- 제품 분류 결과와 장비 상태 정보를 서로 다른 의미로 처리
+
+예정 Payload:
+
+```json
+{
+  "componentCode": "CAMERA",
+  "status": "ERROR",
+  "eventCode": "CAMERA_ERROR",
+  "message": "Camera capture failed"
+}
+```
+
+- `componentCode`: 오류가 발생한 장비
+- `status`: `NORMAL`, `WARNING`, `ERROR`, `OFFLINE`
+- `eventCode`: 서버에서 이벤트 종류를 구분하기 위한 코드
+- `message`: 상세 설명
+
+### 제품 분류 실패와 장비 상태 처리 방향 정리
+
+- `vision/product_detection`의 `FAILED`는 해당 제품 처리 결과가 실패했음을 의미
+- 장비 오류의 실제 원인과 상태는 `component/status/update`에서 전달받도록 분리
+- 서버는 제품 분류 결과만 보고 카메라/센서/서보 오류 원인을 추측하지 않음
+- 장비 오류 원인은 `componentCode`, `status`, `eventCode`를 기준으로 처리
+
+예:
+
+```text
+제품 분류 결과
+→ classificationStatus = FAILED
+
+장비 상태
+→ CAMERA / ERROR / CAMERA_ERROR
+```
+
+두 메시지는 같은 상황에서 각각 별도로 전송될 수 있다.
+
+### NO_DETECTION 처리 방향
+
+- 제어부 규격에서 `NO_DETECTION`은 `CAMERA / WARNING`으로 정의
+- 제품 관점에서는 YOLO 객체 미검출로 인해 `classificationStatus = FAILED`
+- 장비 관점에서는 카메라/YOLO 자체의 완전한 고장으로 보기 어려워 `WARNING` 처리 가능
+- 현재 서버의 `ProductDetectionService`는 모든 `FAILED`를 ERROR로 처리하고 있어 추후 수정 필요
+- 향후 장비 상태 판단은 `component/status/update`를 기준으로 처리하도록 변경 예정
+
+### 구성요소 코드 통일
+
+- 기존 서버 코드에서 사용하던 `VISION_MODULE` 명칭을 `CAMERA`로 통일하기로 결정
+- 제어부 규격의 `CAMERA = Picamera2 및 YOLO` 정의에 맞춰 서버 DB 및 관련 코드를 수정 예정
+
+---
+
 ## 현재 완료 상태
 
 - [x] 데이터베이스 생성 스크립트
@@ -1117,19 +1294,31 @@ MQTT Topic 구독 완료: smart_sorting/vision/product_detection
 - [x] DBeaver ERD
 - [x] ERDCloud ERD
 
+### ASP.NET Core / DB
+
 - [x] ASP.NET Core Web API 프로젝트 생성
 - [x] MySQL 및 Entity Framework Core 연동
 - [x] Entity 모델 및 `AppDbContext` 작성
 - [x] `ProductionTarget` 모델 및 `production_targets` 매핑
+- [x] 관리자 웹 개발용 CORS 설정
+
+### 인증
 
 - [x] BCrypt 기반 로그인 API 구현
 - [x] 관리자 테스트 계정 BCrypt 해시 적용
 - [x] JWT 발급 및 인증 처리
-- [x] 관리자 웹 개발용 CORS 설정
+- [x] 로그인 성공 업무 로그 추가
+
+### 생산 목표
 
 - [x] 생산 목표 조회 API
 - [x] 생산 목표 설정 API
 - [x] 생산 목표 조회·설정 API 테스트
+- [x] 생산 목표 0 이하 입력 방지
+- [x] 생산 목표 변경 업무 로그 추가
+
+### 생산 작업
+
 - [x] 생산 작업 시작 API
 - [x] 생산 시작 시 DB의 현재 생산 목표 적용 구조 구현
 - [x] 생산 시작 API 사용자 Claim 조회 오류 수정
@@ -1140,14 +1329,28 @@ MQTT Topic 구독 완료: smart_sorting/vision/product_detection
 - [x] 변경된 생산 목표·생산 시작 구조 전체 흐름 테스트
 - [x] 생산 중 목표 변경 시 현재 생산 세션 목표 유지 확인
 - [x] 다음 생산 세션부터 변경된 목표 적용 확인
+- [x] 생산 작업 시작·종료 업무 로그 추가
+
+### 제품 감지
 
 - [x] 제품 감지 결과 저장 API
 - [x] 제품 분류 성공·실패 검증
 - [x] 초콜릿·사탕 생산 수량 갱신 로직
 - [x] 제품 감지 처리 로직 `ProductDetectionService` 분리
+- [x] 제품 분류 성공·실패 업무 로그 추가
+- [x] 초콜릿 세트 완료 시 `INFO` 알림 생성
+
+### 시스템 구성요소
 
 - [x] 시스템 구성요소 상태 조회 API
 - [x] 시스템 구성요소 상태 변경 API
+- [x] 실제 상태가 변경된 경우에만 `component/status` MQTT Publish
+- [x] 시스템 구성요소 상태 변경 업무 로그 추가
+- [x] 알림 생성에 따른 구성요소 상태 변경 로그 추가
+- [x] 알림 복구에 따른 구성요소 상태 변경 로그 추가
+- [x] 작업자 LCD용 `WORKER_DISPLAY` componentCode 사용 결정
+
+### 알림
 
 - [x] 알림 생성 API
 - [x] 알림 조회 API
@@ -1159,7 +1362,16 @@ MQTT Topic 구독 완료: smart_sorting/vision/product_detection
 - [x] 알림과 제품 감지 결과 연결 구조 구현
 - [x] 동일 구성요소의 미복구 알림을 고려한 상태 복구 처리
 - [x] 제품 분류 실패 시 자동 `ERROR` 알림 생성
-- [x] 초콜릿 세트 완료 시 `INFO` 알림 생성
+- [x] 수동 알림 생성 시 MQTT Publish 연동
+- [x] 알림 복구 시 시스템 구성요소 상태 재계산
+- [x] 알림 복구에 따른 `component/status` MQTT Publish
+- [x] 알림 생성 업무 로그 추가
+- [x] 알림 확인 업무 로그 추가
+- [x] 알림 복구 업무 로그 추가
+- [x] 알림 생성 → 구성요소 `NORMAL -> ERROR` 테스트
+- [x] 알림 복구 → 구성요소 `ERROR -> NORMAL` 테스트
+
+### MQTT
 
 - [x] 외부 HTTP API 접속 확인
 - [x] Mosquitto 외부 접속 확인
@@ -1167,61 +1379,84 @@ MQTT Topic 구독 완료: smart_sorting/vision/product_detection
 - [x] MQTT 제품 감지 Subscribe 구현
 - [x] MQTT 제품 감지 결과 DB 저장 및 생산량 갱신 테스트
 - [x] MQTT 제품 감지 Topic 이름 정리
-
-- [x] 작업자 UI 통신 구조 큰 틀 정리
-- [x] 관리자 웹 통신 구조 큰 틀 정리
-- [x] 관리자 웹·작업자 Qt REST API 역할 분리
-- [x] 작업자·관리자 공통 MQTT Payload 구조 정리
-
 - [x] 서버 → 클라이언트 MQTT Publish 구현
 - [x] `smart_sorting/production/status` Publish 구현
 - [x] `smart_sorting/alert` Publish 구현
 - [x] `smart_sorting/component/status` Publish 구현
-- [x] 제품 분류 실패 시 `VISION_MODULE` `ERROR` DB 저장
-- [x] 제품 분류 실패 시 `smart_sorting/alert` MQTT Publish
-- [x] 제품 분류 실패에 따른 `component/status` MQTT Publish 제거
-- [x] 제품 분류 실패 MQTT 변경 사항 테스트
-- [x] 알림 복구 시 시스템 구성요소 상태 재계산
-- [x] 알림 복구에 따른 `component/status` MQTT Publish
-- [x] 수동 알림 생성 시 MQTT Publish 연동
 - [x] 생산 작업 시작·종료 시 `production/status` MQTT Publish 구현
-
 - [x] Mosquitto WebSocket `9001` Listener 구성
 - [x] 외부 네트워크에서 WebSocket 포트 연결 확인
+- [x] MQTT Publish 로그 구조 정리
+- [x] MQTT Receive 로그 구조 정리
+- [x] MQTT Payload 전체 콘솔 출력 제거
+- [x] MQTT 연결·수신 처리 오류 `ILogger` 적용
+- [x] `IHostApplicationLifetime`을 이용한 MQTT 연결 시작 시점 조정
+- [x] 서버 시작 로그 이후 MQTT 연결 로그 출력 확인
+
+### 관리자 대시보드
 
 - [x] 관리자 대시보드 오늘 생산량 요약 API
 - [x] 관리자 대시보드 시간대별 생산량 추이 API
 - [x] 관리자 대시보드 제품 분류 비율 API
 - [x] 관리자 대시보드 최근 제품 감지 결과 API
 
-- [x] 실제 장비 → 서버 상태 MQTT Topic 구조 정리
-- [x] `smart_sorting/component/status/update` Topic 사용 결정
-- [x] 실제 장비 상태 MQTT Payload 구조 정리
-- [x] `componentCode`, `status`, `message` 필드 기준 정리
-- [x] 실제 장비 상태와 `system_components` 연동 기준 정리
-- [x] 장비 이상 상태와 `alerts` 연동 기준 정리
-- [x] 실제 장비용 주요 `componentCode` 정리
-- [x] 작업자 LCD용 `WORKER_DISPLAY` componentCode 사용 결정
+### 클라이언트 통신 구조
+
+- [x] 작업자 UI 통신 구조 큰 틀 정리
+- [x] 관리자 웹 통신 구조 큰 틀 정리
+- [x] 관리자 웹·작업자 Qt REST API 역할 분리
+- [x] 작업자·관리자 공통 MQTT Payload 구조 정리
+
+### NLog / 서버 로그
 
 - [x] EF Core SQL 로그 출력 축소
 - [x] `NLog.Web.AspNetCore` 설치
 - [x] `nlog.config` 추가
 - [x] NLog Console 출력 형식 `${message}` 적용
-- [x] ASP.NET Core 시작 로그 출력 형식 간소화
+- [x] `Microsoft.Hosting.Lifetime` 시작·종료 로그 유지
+- [x] ASP.NET Core Routing / MVC / Endpoint Information 로그 숨김
+- [x] EF Core 내부 Information 로그 숨김
 - [x] 불필요한 Data Protection Information 로그 제거
-- [x] `IHostApplicationLifetime`을 이용한 MQTT 연결 시작 시점 조정
-- [x] 서버 시작 로그 이후 MQTT 연결 로그 출력 확인
+- [x] 서버 업무 로그 표시 Rule 구성
+- [x] `[LOGIN]` 로그 추가
+- [x] `[TARGET]` 로그 추가
+- [x] `[SESSION]` 로그 추가
+- [x] `[DETECTION]` 로그 추가
+- [x] `[ALERT]` 로그 추가
+- [x] `[COMPONENT]` 로그 추가
+- [x] `[MQTT]` 로그 추가
 
-- [ ] `system_components`에 `WORKER_DISPLAY` 실제 반영
-- [ ] ASP.NET Core·EF Core 내부 로그 NLog Rule 정리
-- [ ] 서버 업무 로그 추가
+### 실제 장비 상태 MQTT 규격
+
+- [x] 실제 장비 → 서버 상태 MQTT Topic 구조 정리
+- [x] `smart_sorting/component/status/update` Topic 사용 결정
+- [x] 실제 장비 상태와 `system_components` 연동 기준 정리
+- [x] 장비 이상 상태와 `alerts` 연동 기준 정리
+- [x] 실제 장비용 주요 `componentCode` 정리
+- [x] 제어부와 제품 분류 결과 / 장비 상태 메시지 역할 분리 확인
+- [x] `componentCode`, `status`, `eventCode`, `message` Payload 구조 결정
+- [x] `eventCode`를 별도 필드로 전달하는 방식 결정
+- [x] `NO_DETECTION`을 `CAMERA / WARNING`으로 처리하는 제어부 기준 확인
+- [x] 서버 구성요소 명칭을 `VISION_MODULE` 대신 `CAMERA`로 통일하기로 결정
+
+---
+
+## 미완료 상태
+
+- [ ] `system_components`에 `WORKER_DISPLAY` 실제 반영 확인
+- [ ] 서버 DB 및 코드의 `VISION_MODULE`을 `CAMERA`로 실제 변경
+- [ ] `ProductDetectionService`의 `FAILED -> 무조건 장비 ERROR` 처리 제거
 - [ ] `smart_sorting/component/status/update` Subscribe 구현
+- [ ] 실제 장비 상태 수신 DTO 구현
+- [ ] `componentCode` 검증
+- [ ] `status` 검증
+- [ ] `eventCode` 처리
 - [ ] 실제 장비 상태 수신 시 `system_components` DB 갱신 구현
 - [ ] 실제 장비 `WARNING / ERROR / OFFLINE` 수신 시 Alert 생성 구현
+- [ ] `NO_DETECTION` 수신 시 `CAMERA = WARNING` 처리
 - [ ] 실제 장비 상태 처리 후 `component/status` MQTT Publish 연동
 - [ ] 실제 장비 Alert 생성 후 `alert` MQTT Publish 연동
 - [ ] 실제 장비 상태 MQTT 처리 테스트
-
 - [ ] 관리자 웹 생산 목표 API 실제 화면 연동
 - [ ] 작업자 Qt REST API 실제 연동
 - [ ] 관리자 웹 실제 장비 `component/status` 연동 확인
@@ -1232,54 +1467,244 @@ MQTT Topic 구독 완료: smart_sorting/vision/product_detection
 
 ## 다음 작업
 
-1. `nlog.config`의 Rule을 정리한다.
-    - `Microsoft.Hosting.Lifetime` 시작 로그 유지
-    - ASP.NET Core Routing / MVC / Endpoint Information 로그 숨김
-    - EF Core 내부 Information 로그 숨김
-    - 서버에서 직접 작성한 업무 로그 표시
+### 1. 서버 구성요소 코드 정리
 
-2. 서버 업무 로그를 추가한다.
-    - 로그인
-    - 생산 목표 변경
-    - 생산 시작·종료
-    - 제품 감지 성공·실패
-    - 장비 상태 변경
-    - 알림 생성
-    - MQTT 연결·수신·Publish
+기존 서버에서 사용 중인:
 
-3. 작업자 LCD용 `WORKER_DISPLAY`를 `system_components`에 실제 반영한다.
+```text
+VISION_MODULE
+```
 
-4. 실제 장비 상태 MQTT Subscribe를 구현한다.
-    - Topic: `smart_sorting/component/status/update`
-    - `componentCode` 검증
-    - `status` 검증
-    - `message` 처리
+을 제어부 규격에 맞춰:
 
-5. 실제 장비 상태 수신 처리 로직을 구현한다.
-    - `system_components.current_status` 갱신
-    - `status_updated_at` 갱신
-    - `NORMAL`은 상태만 갱신
-    - `WARNING`은 WARNING Alert 생성
-    - `ERROR`는 ERROR Alert 생성
-    - `OFFLINE` 알림 처리 기준 적용
+```text
+CAMERA
+```
 
-6. 실제 장비 상태 처리 결과를 MQTT로 전달한다.
-    - `smart_sorting/component/status`
-    - `smart_sorting/alert`
+로 통일한다.
 
-7. MQTT Explorer를 이용하여 실제 장비 상태 처리 흐름을 테스트한다.
-    - `NORMAL`
-    - `WARNING`
-    - `ERROR`
-    - `OFFLINE`
-    - DB 상태 변경 확인
-    - Alert 생성 확인
-    - MQTT Publish 확인
+확인 대상:
 
-8. 서버 기능이 완료되면 각 담당자가 실제 클라이언트와 연동한다.
-    - 관리자 웹 생산 목표 API 연동
-    - 관리자 웹 장비 상태 MQTT 연동
-    - 작업자 Qt REST API 연동
-    - 작업자 UI 라인 제어 MQTT 연동
+- `system_components` DB 데이터
+- `ProductDetectionService`
+- `AlertsController`
+- 테스트 데이터
+- 관련 MQTT Payload
 
-9. Raspberry Pi, 작업자 Qt, 관리자 웹, ASP.NET Core 서버, MQTT Broker를 연결하여 전체 시스템 통합 테스트를 진행한다.
+---
+
+### 2. 제품 분류 실패 처리 구조 수정
+
+현재 `ProductDetectionService`에서는 `classificationStatus = FAILED`일 때
+장비 상태까지 `ERROR`로 변경하는 구조가 존재한다.
+
+앞으로는 역할을 다음과 같이 분리한다.
+
+```text
+smart_sorting/vision/product_detection
+→ 해당 제품의 분류 결과 처리
+
+smart_sorting/component/status/update
+→ 실제 장비 상태 및 오류 원인 처리
+```
+
+따라서 제품 분류 `FAILED`만으로
+`CAMERA = ERROR`를 결정하지 않도록 수정한다.
+
+예:
+
+```text
+제품 분류 실패
+classificationStatus = FAILED
+
++
+
+장비 상태
+CAMERA / WARNING / NO_DETECTION
+```
+
+두 메시지는 서로 다른 의미로 각각 처리한다.
+
+---
+
+### 3. 실제 장비 상태 MQTT Subscribe 구현
+
+Topic:
+
+```text
+smart_sorting/component/status/update
+```
+
+Payload:
+
+```json
+{
+  "componentCode": "CAMERA",
+  "status": "ERROR",
+  "eventCode": "CAMERA_ERROR",
+  "message": "Camera capture failed"
+}
+```
+
+수신 시 다음 필드를 검증한다.
+
+- `componentCode`
+- `status`
+- `eventCode`
+- `message`
+
+---
+
+### 4. 실제 장비 상태 DB 처리 구현
+
+수신한 `componentCode`에 해당하는
+`system_components` 데이터를 조회한다.
+
+처리 항목:
+
+- `current_status` 갱신
+- `status_updated_at` 갱신
+
+상태 기준:
+
+```text
+NORMAL
+→ 정상 상태 갱신
+
+WARNING
+→ 장비 상태 WARNING
+→ WARNING Alert 생성
+
+ERROR
+→ 장비 상태 ERROR
+→ ERROR Alert 생성
+
+OFFLINE
+→ 장비 상태 OFFLINE
+→ 연결 오류 Alert 생성
+```
+
+---
+
+### 5. eventCode 기반 이벤트 처리
+
+제어부에서 전달받은 `eventCode`를 기준으로
+이벤트 종류를 구분한다.
+
+예:
+
+```text
+CAMERA_ERROR
+SERVO_ACK_TIMEOUT
+SERVO_ACK_ERROR
+STEPPER_ERROR
+IR_ERROR
+SERIAL_DISCONNECTED
+SERIAL_ERROR
+SERIAL_TIMEOUT
+YOLO_ERROR
+MODEL_LOAD_ERROR
+NO_DETECTION
+IMAGE_SAVE_ERROR
+NETWORK_ERROR
+DATA_SEND_ERROR
+```
+
+특히:
+
+```text
+NO_DETECTION
+→ CAMERA / WARNING
+```
+
+으로 처리한다.
+
+서버는 `message` 문자열을 분석하여 오류 종류를 추측하지 않고
+`eventCode`를 기준으로 처리한다.
+
+---
+
+### 6. 장비 상태 처리 결과 MQTT Publish
+
+상태 변경 후:
+
+```text
+smart_sorting/component/status
+```
+
+으로 클라이언트에 전달한다.
+
+Alert가 새로 생성된 경우:
+
+```text
+smart_sorting/alert
+```
+
+으로 알림을 전달한다.
+
+---
+
+### 7. MQTT Explorer 테스트
+
+다음 상태를 순서대로 테스트한다.
+
+```text
+NORMAL
+WARNING
+ERROR
+OFFLINE
+```
+
+추가 확인:
+
+- `CAMERA / WARNING / NO_DETECTION`
+- `CAMERA / ERROR / CAMERA_ERROR`
+- `SORTING_SERVO / ERROR / SERVO_ACK_TIMEOUT`
+- `CONVEYOR / OFFLINE / SERIAL_DISCONNECTED`
+
+각 테스트에서 확인할 항목:
+
+- MQTT Receive 로그
+- `system_components` DB 변경
+- Alert 생성 여부
+- `component/status` Publish
+- `alert` Publish
+- `[COMPONENT]` 로그
+- `[ALERT]` 로그
+
+---
+
+### 8. 실제 클라이언트 연동
+
+서버 기능 완료 후 각 담당 클라이언트와 연결한다.
+
+- 관리자 웹 생산 목표 API 연동
+- 관리자 웹 장비 상태 MQTT 연동
+- 관리자 웹 Alert MQTT 연동
+- 작업자 Qt REST API 연동
+- 작업자 Qt MQTT 연동
+- 작업자 UI 라인 제어 MQTT 연동
+
+---
+
+### 9. 전체 시스템 통합 테스트
+
+다음 구성요소를 모두 연결한다.
+
+```text
+Raspberry Pi 제어부
+        ↓
+MQTT Broker
+        ↓
+ASP.NET Core Server
+   ↓             ↓
+MySQL        MQTT Publish
+                 ↓
+        ┌────────┴────────┐
+        ↓                 ↓
+   관리자 Web          작업자 Qt
+```
+
+최종적으로 제품 감지, 생산량 갱신, 장비 상태 변경,
+Alert 생성·확인·복구, 관리자 화면, 작업자 화면까지
+전체 흐름을 테스트한다.

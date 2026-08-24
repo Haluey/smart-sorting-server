@@ -12,13 +12,16 @@ namespace SmartSortingServer.Controllers {
     public class SystemComponentsController : ControllerBase {
         private readonly AppDbContext _context;
         private readonly MqttPublisherService _mqttPublisher;
+        private readonly ILogger<SystemComponentsController> _logger;
 
         public SystemComponentsController(
             AppDbContext context,
-            MqttPublisherService mqttPublisher) {
+            MqttPublisherService mqttPublisher,
+            ILogger<SystemComponentsController> logger) {
 
             _context = context;
             _mqttPublisher = mqttPublisher;
+            _logger = logger;
         }
 
         // 시스템 구성요소 전체 조회
@@ -87,14 +90,19 @@ namespace SmartSortingServer.Controllers {
 
             // 실제 상태가 변경된 경우에만 MQTT Publish
             if (previousStatus != component.CurrentStatus) {
+
+                _logger.LogInformation(
+                    "[COMPONENT] 상태 변경 - Component: {ComponentCode}, {PreviousStatus} -> {CurrentStatus}",
+                    component.ComponentCode,
+                    previousStatus,
+                    component.CurrentStatus
+                );
+
                 await _mqttPublisher.PublishAsync(
                     "smart_sorting/component/status",
                     new {
-                        componentCode =
-                            component.ComponentCode,
-
-                        status =
-                            component.CurrentStatus
+                        componentCode = component.ComponentCode,
+                        status = component.CurrentStatus
                     }
                 );
             }

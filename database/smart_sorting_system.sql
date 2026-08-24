@@ -546,3 +546,11 @@ INSERT INTO production_targets (
     target_candy_count
 )
 VALUES (1, 10, 100);
+
+UPDATE alerts a
+JOIN system_components c
+    ON a.component_id = c.component_id
+SET a.recovery_status = 'RECOVERED',
+    a.recovered_at = NOW()
+WHERE a.recovery_status = 'NOT_RECOVERED'
+  AND c.component_code = 'VISION_MODULE';
