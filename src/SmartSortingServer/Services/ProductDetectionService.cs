@@ -168,58 +168,7 @@ namespace SmartSortingServer.Services {
                 productionSession.UpdatedAt = DateTime.Now;
             }
 
-            // -------------------------------------------------
-            // 분류 실패 처리
-            // -------------------------------------------------
-
-            if (request.ClassificationStatus == "FAILED") {
-
-                var camera =
-                    await _context.SystemComponents
-                        .FirstOrDefaultAsync(
-                            c => c.ComponentCode
-                                == "CAMERA"
-                        );
-
-                // ERROR 알림 생성
-                var errorAlert = new Alert {
-                    SessionId =
-                        productionSession.SessionId,
-
-                    ComponentId =
-                        camera?.ComponentId,
-
-                    ProductDetectionId =
-                        productDetection.ProductDetectionId,
-
-                    CheckedByUserId = null,
-
-                    AlertType = "ERROR",
-                    Priority = "MEDIUM",
-
-                    RecoveryStatus = "NOT_RECOVERED",
-                    CheckStatus = "UNCHECKED",
-
-                    AlertMessage =
-                        "제품 분류에 실패했습니다.",
-
-                    CreatedAt = DateTime.Now,
-                    RecoveredAt = null,
-                    CheckedAt = null
-                };
-
-                _context.Alerts.Add(errorAlert);
-
-                createdAlert = errorAlert;
-
-                // CAMERA 상태 ERROR 변경
-                if (camera != null) {
-                    camera.CurrentStatus = "ERROR";
-                    camera.StatusUpdatedAt = DateTime.Now;
-                }
-            }
-
-            // 수량, 알림, 상태 변경 저장
+            // 수량 및 알림 변경 저장
             await _context.SaveChangesAsync();
 
             if (request.ClassificationStatus == "SUCCESS"
