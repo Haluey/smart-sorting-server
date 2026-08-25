@@ -1,7 +1,9 @@
-﻿using System.Text.Json;
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using MQTTnet;
+using SmartSortingServer.Data;
 using SmartSortingServer.DTOs;
+using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 
 namespace SmartSortingServer.Services {
     public class MqttSubscriberService : BackgroundService {
@@ -66,9 +68,34 @@ namespace SmartSortingServer.Services {
                     stoppingToken
                 );
 
+                // 컴포넌트 상태 토픽 구독
+                var componentStatusTopicFilter =
+                    mqttFactory
+                        .CreateTopicFilterBuilder()
+                        .WithTopic(
+                            "smart_sorting/component/status/update"
+                        )
+                        .Build();
+
+                var componentStatusSubscribeOptions =
+                    mqttFactory
+                        .CreateSubscribeOptionsBuilder()
+                        .WithTopicFilter(componentStatusTopicFilter)
+                        .Build();
+
+                await _mqttClient.SubscribeAsync(
+                    componentStatusSubscribeOptions,
+                    stoppingToken
+                );
+
                 Console.WriteLine(
                     "MQTT Topic 구독 완료: " +
                     "smart_sorting/camera/product_detection"
+                );
+
+                Console.WriteLine(
+                    "MQTT Topic 구독 완료: " +
+                    "smart_sorting/component/status/update"
                 );
 
                 Console.WriteLine();
@@ -95,6 +122,15 @@ namespace SmartSortingServer.Services {
                     "smart_sorting/camera/product_detection") {
 
                     await HandleProductDetectionAsync(
+                        payload
+                    );
+                }
+
+                // 컴포넌트 상태 토픽 처리
+                else if (topic ==
+                    "smart_sorting/component/status/update") {
+
+                    await HandleComponentStatusUpdateAsync(
                         payload
                     );
                 }
@@ -201,5 +237,109 @@ namespace SmartSortingServer.Services {
                 );
             }
         }
+
+        // 컴포넌트 상태 MQTT 메시지 처리
+        private async Task HandleComponentStatusUpdateAsync(
+            string payload) {
+
+            try {
+                var request =
+                    JsonSerializer
+                        .Deserialize<ComponentStatusUpdateRequest>(
+                            payload,
+                            new JsonSerializerOptions {
+                                PropertyNameCaseInsensitive = true
+                            }
+                        );
+
+                if (request == null) {
+                    _logger.LogError(
+                        "[MQTT] 컴포넌트 상태 데이터 변환 실패"
+                    );
+
+                    return;
+                }
+
+                // 입력값 정리
+                string componentCode =
+                    request.ComponentCode.ToUpper();
+
+                string status =
+                    request.Status.ToUpper();
+
+                // 상태값 확인
+                string[] allowedStatuses = {
+                    "NORMAL",
+                    "WARNING",
+                    "ERROR",
+                    "OFFLINE"
+                };
+
+                if (!allowedStatuses.Contains(status)) {
+                    _logger.LogError(
+                        "[MQTT] 잘못된 컴포넌트 상태 - Component: {ComponentCode}, Status: {Status}",
+                        componentCode,
+                        status
+                    );
+
+                    return;
+                }
+
+                // Scoped DbContext 생성
+                using var scope =
+                    _scopeFactory.CreateScope();
+
+                var context =
+                    scope.ServiceProvider
+                        .GetRequiredService<AppDbContext>();
+
+                // 컴포넌트 조회
+                var component =
+                    await context.SystemComponents
+                        .FirstOrDefaultAsync(
+                            c => c.ComponentCode
+                                == componentCode
+                        );
+
+                if (component == null) {
+                    _logger.LogError(
+                        "[MQTT] 시스템 컴포넌트를 찾을 수 없음 - Component: {ComponentCode}",
+                        componentCode
+                    );
+
+                    return;
+                }
+
+                // 기존 상태 저장
+                string previousStatus =
+                    component.CurrentStatus;
+
+                // 상태 변경
+                component.CurrentStatus =
+                    status;
+
+                component.StatusUpdatedAt =
+                    DateTime.Now;
+
+                await context.SaveChangesAsync();
+
+                // 실제 상태가 변경된 경우 로그 출력
+                if (previousStatus != component.CurrentStatus) {
+                    _logger.LogInformation(
+                        "[COMPONENT] 상태 변경 - Component: {ComponentCode}, {PreviousStatus} -> {CurrentStatus}",
+                        component.ComponentCode,
+                        previousStatus,
+                        component.CurrentStatus
+                    );
+                }
+            }
+            catch (Exception ex) {
+                _logger.LogError(
+                    "[MQTT] 컴포넌트 상태 처리 실패 - {Message}",
+                    ex.Message
+                );
+            }
+        }
+
     }
 }
