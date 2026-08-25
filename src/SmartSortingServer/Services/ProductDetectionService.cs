@@ -174,11 +174,11 @@ namespace SmartSortingServer.Services {
 
             if (request.ClassificationStatus == "FAILED") {
 
-                var visionModule =
+                var camera =
                     await _context.SystemComponents
                         .FirstOrDefaultAsync(
                             c => c.ComponentCode
-                                == "VISION_MODULE"
+                                == "CAMERA"
                         );
 
                 // ERROR 알림 생성
@@ -187,7 +187,7 @@ namespace SmartSortingServer.Services {
                         productionSession.SessionId,
 
                     ComponentId =
-                        visionModule?.ComponentId,
+                        camera?.ComponentId,
 
                     ProductDetectionId =
                         productDetection.ProductDetectionId,
@@ -212,10 +212,10 @@ namespace SmartSortingServer.Services {
 
                 createdAlert = errorAlert;
 
-                // VISION_MODULE 상태 ERROR 변경
-                if (visionModule != null) {
-                    visionModule.CurrentStatus = "ERROR";
-                    visionModule.StatusUpdatedAt = DateTime.Now;
+                // CAMERA 상태 ERROR 변경
+                if (camera != null) {
+                    camera.CurrentStatus = "ERROR";
+                    camera.StatusUpdatedAt = DateTime.Now;
                 }
             }
 

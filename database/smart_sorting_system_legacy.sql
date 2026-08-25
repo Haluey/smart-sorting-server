@@ -1,29 +1,12 @@
--- =========================================================
--- Smart Sorting System Database
--- 최종 정리본
---
--- 주의:
--- 이 스크립트를 실행하면 기존 smart_sorting_system DB를 삭제하고
--- 처음부터 다시 생성합니다.
---
--- DBeaver 실행 방법:
--- 현재 SQL문 실행    : Ctrl + Enter
--- SQL 스크립트 전체 실행 : Alt + X
--- =========================================================
-
-DROP DATABASE IF EXISTS smart_sorting_system;
-
-CREATE DATABASE smart_sorting_system
+-- 1. 데이터베이스 생성
+CREATE DATABASE IF NOT EXISTS smart_sorting_system
     DEFAULT CHARACTER SET utf8mb4
     DEFAULT COLLATE utf8mb4_unicode_ci;
 
+-- 2. 데이터베이스 선택
 USE smart_sorting_system;
 
-
--- =========================================================
--- 1. 사용자 테이블
--- =========================================================
-
+-- 3. 사용자 테이블 생성
 CREATE TABLE users (
     user_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     login_id VARCHAR(50) NOT NULL UNIQUE,
@@ -36,11 +19,7 @@ CREATE TABLE users (
         CHECK (role IN ('ADMIN', 'WORKER'))
 );
 
-
--- =========================================================
--- 2. 제품 유형 테이블
--- =========================================================
-
+-- 4. 제품 유형 테이블 생성
 CREATE TABLE product_types (
     product_type_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     product_type_code VARCHAR(20) NOT NULL UNIQUE,
@@ -52,11 +31,16 @@ CREATE TABLE product_types (
         CHECK (unit_per_set > 0)
 );
 
+-- 5. 제품 유형 초기 데이터
+INSERT INTO product_types (
+    product_type_code,
+    product_name,
+    unit_per_set
+) VALUES
+    ('CHOCOLATE', '초콜릿', 10),
+    ('CANDY', '사탕', 1);
 
--- =========================================================
--- 3. 시스템 구성요소 테이블
--- =========================================================
-
+-- 6. 시스템 구성요소 테이블 생성
 CREATE TABLE system_components (
     component_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     component_code VARCHAR(30) NOT NULL UNIQUE,
@@ -85,31 +69,40 @@ CREATE TABLE system_components (
         ))
 );
 
+-- 7. 시스템 구성요소 초기 데이터
+INSERT INTO system_components (
+    component_code,
+    component_name,
+    component_type,
+    current_status
+) VALUES
+    -- 제어 장치
+    ('RASPBERRY_PI', '라즈베리파이 5', 'CONTROLLER', 'OFFLINE'),
+    ('ARDUINO', '아두이노 제어 보드', 'CONTROLLER', 'OFFLINE'),
 
--- =========================================================
--- 4. 생산 목표 테이블
--- =========================================================
+    -- 센서
+    ('IR_SENSOR', '제품 투입 감지 센서', 'SENSOR', 'OFFLINE'),
+    ('CAMERA', '제품 분류 카메라', 'SENSOR', 'OFFLINE'),
 
-CREATE TABLE production_targets (
-    target_id INT PRIMARY KEY,
-    target_chocolate_set_count INT NOT NULL,
-    target_candy_count INT NOT NULL,
-    updated_at DATETIME NOT NULL
-        DEFAULT CURRENT_TIMESTAMP
-        ON UPDATE CURRENT_TIMESTAMP,
+    -- 구동 장치
+    ('CONVEYOR', '컨베이어 벨트', 'ACTUATOR', 'OFFLINE'),
+    ('SORTING_SERVO', '제품 분류 서보모터', 'ACTUATOR', 'OFFLINE'),
+    ('BUZZER', '알림 부저', 'ACTUATOR', 'OFFLINE'),
 
-    CONSTRAINT chk_production_targets_chocolate
-        CHECK (target_chocolate_set_count > 0),
+    -- 화면 장치
+    ('WORKER_DISPLAY', '작업자 LCD 장비', 'DISPLAY', 'OFFLINE'),
 
-    CONSTRAINT chk_production_targets_candy
-        CHECK (target_candy_count > 0)
-);
+    -- 소프트웨어
+    ('VISION_MODULE', 'OpenCV 제품 분류 모듈', 'SOFTWARE', 'OFFLINE'),
+    ('WORKER_UI', '작업자 화면 프로그램', 'SOFTWARE', 'OFFLINE'),
+    ('ADMIN_WEB', '관리자 웹 프로그램', 'SOFTWARE', 'OFFLINE'),
+    ('MQTT_BROKER', 'MQTT 브로커', 'SOFTWARE', 'OFFLINE'),
 
-
--- =========================================================
--- 5. 생산 세션 테이블
--- =========================================================
-
+    -- 서버 및 데이터베이스
+    ('API_SERVER', 'ASP.NET Core API 서버', 'SERVER', 'OFFLINE'),
+    ('MYSQL_DATABASE', 'MySQL 데이터베이스', 'DATABASE', 'OFFLINE');
+    
+-- 8. 생산 세션 테이블 생성
 CREATE TABLE production_sessions (
     session_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     user_id BIGINT NOT NULL,
@@ -138,6 +131,7 @@ CREATE TABLE production_sessions (
     CONSTRAINT chk_production_sessions_target_candy
         CHECK (target_candy_count >= 0),
 
+    -- 초콜릿과 사탕 목표량이 모두 0인 세션 생성 방지
     CONSTRAINT chk_production_sessions_target
         CHECK (
             target_chocolate_set_count > 0
@@ -158,6 +152,7 @@ CREATE TABLE production_sessions (
             'CANCELLED'
         )),
 
+    -- 진행 중에는 종료 시각이 없고, 완료·취소 시에는 종료 시각 필수
     CONSTRAINT chk_production_sessions_ended_at
         CHECK (
             (
@@ -172,11 +167,7 @@ CREATE TABLE production_sessions (
         )
 );
 
-
--- =========================================================
--- 6. 제품 감지 및 분류 결과 테이블
--- =========================================================
-
+-- 9. 제품 감지 및 분류 결과 테이블 생성
 CREATE TABLE product_detections (
     product_detection_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     session_id BIGINT NOT NULL,
@@ -208,6 +199,8 @@ CREATE TABLE product_detections (
             'FAILED'
         )),
 
+    -- 분류 성공 시 제품 유형과 신뢰도 필수,
+    -- 분류 실패 시 제품 유형은 NULL
     CONSTRAINT chk_product_detections_result
         CHECK (
             (
@@ -223,11 +216,7 @@ CREATE TABLE product_detections (
         )
 );
 
-
--- =========================================================
--- 7. 알림 테이블
--- =========================================================
-
+-- 10. 알림 테이블 생성
 CREATE TABLE alerts (
     alert_id BIGINT AUTO_INCREMENT PRIMARY KEY,
 
@@ -320,6 +309,8 @@ CREATE TABLE alerts (
             )
         ),
 
+    -- 미복구 상태에는 복구 시각이 없고,
+    -- 복구 완료 상태에는 복구 시각 필수
     CONSTRAINT chk_alerts_recovery_details
         CHECK (
             (
@@ -338,6 +329,8 @@ CREATE TABLE alerts (
             )
         ),
 
+    -- 미확인 상태에는 확인자와 확인 시각이 없고,
+    -- 확인 완료 상태에는 확인자와 확인 시각 필수
     CONSTRAINT chk_alerts_check_details
         CHECK (
             (
@@ -360,88 +353,19 @@ CREATE TABLE alerts (
         )
 );
 
-
--- =========================================================
--- 초기 데이터
--- =========================================================
-
-INSERT INTO product_types (
-    product_type_code,
-    product_name,
-    unit_per_set
-) VALUES
-    ('CHOCOLATE', '초콜릿', 10),
-    ('CANDY', '사탕', 1);
-
-
--- CAMERA는 Picamera2 + YOLO 제품 분류 기능을 함께 담당
--- 기존 VISION_MODULE은 사용하지 않음
--- WORKER_DISPLAY는 작업자용 LCD 장비로 유지
-INSERT INTO system_components (
-    component_code,
-    component_name,
-    component_type,
-    current_status
-) VALUES
-    ('RASPBERRY_PI', '라즈베리파이 5', 'CONTROLLER', 'OFFLINE'),
-    ('ARDUINO', '아두이노 제어 보드', 'CONTROLLER', 'OFFLINE'),
-
-    ('IR_SENSOR', '제품 투입 감지 센서', 'SENSOR', 'OFFLINE'),
-    ('CAMERA', '제품 분류 카메라 및 YOLO', 'SENSOR', 'OFFLINE'),
-
-    ('CONVEYOR', '컨베이어 벨트', 'ACTUATOR', 'OFFLINE'),
-    ('SORTING_SERVO', '제품 분류 서보모터', 'ACTUATOR', 'OFFLINE'),
-    ('BUZZER', '알림 부저', 'ACTUATOR', 'OFFLINE'),
-
-    ('WORKER_DISPLAY', '작업자 LCD 장비', 'DISPLAY', 'OFFLINE'),
-
-    ('WORKER_UI', '작업자 화면 프로그램', 'SOFTWARE', 'OFFLINE'),
-    ('ADMIN_WEB', '관리자 웹 프로그램', 'SOFTWARE', 'OFFLINE'),
-    ('MQTT_BROKER', 'MQTT 브로커', 'SOFTWARE', 'OFFLINE'),
-
-    ('API_SERVER', 'ASP.NET Core API 서버', 'SERVER', 'OFFLINE'),
-    ('MYSQL_DATABASE', 'MySQL 데이터베이스', 'DATABASE', 'OFFLINE');
-
-
-INSERT INTO production_targets (
-    target_id,
-    target_chocolate_set_count,
-    target_candy_count
-) VALUES (
-    1,
-    10,
-    100
-);
-
-
--- 기존 테스트 계정 BCrypt 해시값 직접 적용
+-- 11. 사용자 더미 데이터
+-- password_hash는 로그인 기능 구현 후 BCrypt 해시값으로 교체
 INSERT INTO users (
     login_id,
     password_hash,
     name,
     role
 ) VALUES
-    (
-        'admin01',
-        '$2a$11$w1I.A2g3AusRARbEFsk5LuZC/ArXFWvyyLsUQZyO4iOBWJIOerrja',
-        '관리자',
-        'ADMIN'
-    ),
-    (
-        'worker01',
-        '$2a$11$YZfLhNms4lQpjgQNk3z4O.UEsg8NYXsQrjw8II7KA2v.jwO99quni',
-        '김작업',
-        'WORKER'
-    );
+    ('admin01', 'DUMMY_ADMIN_PASSWORD_HASH', '관리자', 'ADMIN'),
+    ('worker01', 'DUMMY_WORKER_PASSWORD_HASH', '김작업', 'WORKER');
 
 
--- =========================================================
--- 테스트용 더미 데이터
--- =========================================================
--- 초기화 직후 RUNNING 세션이 남지 않도록
--- 두 번째 테스트 세션은 CANCELLED 상태로 저장
--- =========================================================
-
+-- 12. 생산 세션 더미 데이터
 INSERT INTO production_sessions (
     user_id,
     target_chocolate_set_count,
@@ -453,35 +377,34 @@ INSERT INTO production_sessions (
     ended_at
 ) VALUES
     (
-        (
-            SELECT user_id
-            FROM users
-            WHERE login_id = 'worker01'
-        ),
-        5,
-        20,
-        50,
+        (SELECT user_id
+         FROM users
+         WHERE login_id = 'worker01'),
+
+        5,                         -- 초콜릿 목표 5세트
+        20,                        -- 사탕 목표 20개
+        50,                        -- 초콜릿 50개 = 5세트
         20,
         'COMPLETED',
         '2026-08-04 09:00:00',
         '2026-08-04 10:30:00'
     ),
     (
-        (
-            SELECT user_id
-            FROM users
-            WHERE login_id = 'worker01'
-        ),
-        10,
-        30,
+        (SELECT user_id
+         FROM users
+         WHERE login_id = 'worker01'),
+
+        10,                        -- 초콜릿 목표 10세트
+        30,                        -- 사탕 목표 30개
         24,
         12,
-        'CANCELLED',
+        'RUNNING',
         '2026-08-05 13:00:00',
-        '2026-08-05 14:00:00'
+        NULL
     );
 
 
+-- 13. 제품 감지 및 분류 결과 더미 데이터
 INSERT INTO product_detections (
     session_id,
     product_type_id,
@@ -494,6 +417,7 @@ INSERT INTO product_detections (
         (
             SELECT session_id
             FROM production_sessions
+            WHERE status = 'RUNNING'
             ORDER BY session_id DESC
             LIMIT 1
         ),
@@ -511,17 +435,19 @@ INSERT INTO product_detections (
         (
             SELECT session_id
             FROM production_sessions
+            WHERE status = 'RUNNING'
             ORDER BY session_id DESC
             LIMIT 1
         ),
         NULL,
-        0.0000,
+        NULL,
         'uploads/detections/failed_001.jpg',
         'FAILED',
         '2026-08-05 13:06:20'
     );
 
 
+-- 14. 알림 더미 데이터
 INSERT INTO alerts (
     session_id,
     component_id,
@@ -536,10 +462,12 @@ INSERT INTO alerts (
     recovered_at,
     checked_at
 ) VALUES
+    -- INFO 알림: 복구 및 확인 정보 없음
     (
         (
             SELECT session_id
             FROM production_sessions
+            WHERE status = 'RUNNING'
             ORDER BY session_id DESC
             LIMIT 1
         ),
@@ -556,11 +484,12 @@ INSERT INTO alerts (
         NULL
     ),
 
-    -- 과거 테스트 오류이므로 현재 장비 상태와 충돌하지 않도록 RECOVERED 처리
+    -- ERROR 알림: 아직 복구되지 않았고 확인하지 않은 상태
     (
         (
             SELECT session_id
             FROM production_sessions
+            WHERE status = 'RUNNING'
             ORDER BY session_id DESC
             LIMIT 1
         ),
@@ -579,18 +508,90 @@ INSERT INTO alerts (
         NULL,
         'ERROR',
         'HIGH',
-        'RECOVERED',
+        'NOT_RECOVERED',
         'UNCHECKED',
         '카메라 촬영 결과에서 제품 유형을 식별하지 못했습니다.',
         '2026-08-05 13:06:20',
-        '2026-08-05 13:10:00',
+        NULL,
         NULL
     );
 
+UPDATE users
+SET password_hash = '$2a$11$YZfLhNms4lQpjgQNk3z4O.UEsg8NYXsQrjw8II7KA2v.jwO99quni'
+WHERE login_id = 'worker01';
 
--- =========================================================
--- 초기화 결과 확인
--- =========================================================
+UPDATE production_sessions 
+   SET status = 'COMPLETED'
+      ,ended_at = NOW() WHERE session_id = 2;
+    
+ALTER TABLE production_sessions AUTO_INCREMENT = 3;
+
+UPDATE users
+SET password_hash = '$2a$11$w1I.A2g3AusRARbEFsk5LuZC/ArXFWvyyLsUQZyO4iOBWJIOerrja'
+WHERE login_id = 'admin01';
+
+DROP TABLE IF EXISTS production_targets;
+
+CREATE TABLE production_targets (
+    target_id INT PRIMARY KEY,
+    target_chocolate_set_count INT NOT NULL,
+    target_candy_count INT NOT NULL,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP
+);
+
+INSERT INTO production_targets (
+    target_id,
+    target_chocolate_set_count,
+    target_candy_count
+)
+VALUES (1, 10, 100);
+
+UPDATE alerts a
+JOIN system_components c
+    ON a.component_id = c.component_id
+SET a.recovery_status = 'RECOVERED',
+    a.recovered_at = NOW()
+WHERE a.recovery_status = 'NOT_RECOVERED'
+  AND c.component_code = 'VISION_MODULE';
+
+SELECT
+    a.alert_id,
+    a.component_id,
+    c.component_code,
+    a.alert_type,
+    a.priority,
+    a.recovery_status,
+    a.alert_message
+FROM alerts a
+JOIN system_components c
+    ON a.component_id = c.component_id
+WHERE c.component_code = 'VISION_MODULE';
+
+UPDATE alerts
+SET component_id = 4
+WHERE component_id = 9;
+
+SELECT
+    a.alert_id,
+    a.component_id,
+    c.component_code,
+    a.alert_type,
+    a.priority,
+    a.recovery_status,
+    a.alert_message
+FROM alerts a
+JOIN system_components c
+    ON a.component_id = c.component_id
+WHERE a.component_id IN (4, 9)
+ORDER BY a.alert_id;
+
+SELECT COUNT(*) AS vision_alert_count
+FROM alerts
+WHERE component_id = 9;
+
+DELETE FROM system_components
+WHERE component_id = 9;
 
 SELECT
     component_id,
@@ -599,19 +600,5 @@ SELECT
     component_type,
     current_status
 FROM system_components
-ORDER BY component_id;
+WHERE component_code IN ('CAMERA', 'VISION_MODULE');
 
-SELECT
-    target_id,
-    target_chocolate_set_count,
-    target_candy_count,
-    updated_at
-FROM production_targets;
-
-SELECT
-    session_id,
-    status,
-    started_at,
-    ended_at
-FROM production_sessions
-ORDER BY session_id;

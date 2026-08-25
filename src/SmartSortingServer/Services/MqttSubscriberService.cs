@@ -51,7 +51,7 @@ namespace SmartSortingServer.Services {
                     mqttFactory
                         .CreateTopicFilterBuilder()
                         .WithTopic(
-                            "smart_sorting/vision/product_detection"
+                            "smart_sorting/camera/product_detection"
                         )
                         .Build();
 
@@ -68,7 +68,7 @@ namespace SmartSortingServer.Services {
 
                 Console.WriteLine(
                     "MQTT Topic 구독 완료: " +
-                    "smart_sorting/vision/product_detection"
+                    "smart_sorting/camera/product_detection"
                 );
 
                 Console.WriteLine();
@@ -92,7 +92,7 @@ namespace SmartSortingServer.Services {
 
                 // 제품 감지 토픽 처리
                 if (topic ==
-                    "smart_sorting/vision/product_detection") {
+                    "smart_sorting/camera/product_detection") {
 
                     await HandleProductDetectionAsync(
                         payload
