@@ -1281,6 +1281,201 @@ smart_sorting/component/status/update
 
 ---
 
+## 2026-08-25
+
+### 시스템 구성요소 CAMERA 기준 통일
+
+- 기존 서버와 DB에서 사용하던 `VISION_MODULE`을 `CAMERA`로 통일
+- 카메라 촬영과 YOLO 제품 분류 기능을 하나의 `CAMERA` 구성요소로 관리하도록 정리
+- 제품 분류 MQTT Topic을 `smart_sorting/vision/product_detection`에서 `smart_sorting/camera/product_detection`으로 변경
+- `system_components` 초기 데이터를 실제 시스템 구성 기준으로 다시 정리
+- `VISION_MODULE` 제거 후 다음 13개 Component를 기준으로 구성
+  - `RASPBERRY_PI`
+  - `ARDUINO`
+  - `IR_SENSOR`
+  - `CAMERA`
+  - `CONVEYOR`
+  - `SORTING_SERVO`
+  - `BUZZER`
+  - `WORKER_DISPLAY`
+  - `WORKER_UI`
+  - `ADMIN_WEB`
+  - `MQTT_BROKER`
+  - `API_SERVER`
+  - `MYSQL_DATABASE`
+- 장비 연결 전 초기 상태를 모두 `OFFLINE`으로 재설정
+
+### 실제 장비 상태 MQTT 수신 구현
+
+- 제어부에서 장비 상태를 서버로 전달하기 위한 `smart_sorting/component/status/update` Topic Subscribe 구현
+- 실제 장비 상태 수신용 `ComponentStatusUpdateRequest` DTO 추가
+- Payload 필드를 다음과 같이 구성
+  - `ComponentCode`
+  - `Status`
+  - `ErrorCode`
+  - `Message`
+- MQTT 메시지 역직렬화 시 대소문자 차이와 관계없이 필드를 읽을 수 있도록 처리
+- `componentCode`와 `status`는 서버 처리 전에 대문자로 통일
+- 허용 상태값을 다음 네 가지로 제한
+  - `NORMAL`
+  - `WARNING`
+  - `ERROR`
+  - `OFFLINE`
+- 수신한 `componentCode`를 기준으로 `system_components`를 조회하고 `current_status`, `status_updated_at` 갱신
+- 실제 상태가 변경된 경우에만 `[COMPONENT]` 로그를 출력하도록 구성
+
+```text
+제어부
+        ↓
+smart_sorting/component/status/update
+        ↓
+MqttSubscriberService
+        ↓
+system_components 조회
+        ↓
+current_status 갱신
+```
+
+### Component 상태 MQTT 동작 테스트
+
+- MQTT Explorer를 이용하여 `CAMERA` 상태 변경 테스트
+- `CAMERA = NORMAL` 메시지 수신 후 DB 상태가 `NORMAL`로 변경되는 것을 확인
+- `CAMERA = ERROR` 메시지 수신 후 DB 상태가 `ERROR`로 변경되는 것을 확인
+- 상태 변경 시 `[MQTT]`, `[COMPONENT]` 로그가 정상 출력되는 것을 확인
+
+예시 Payload:
+
+```json
+{
+  "componentCode": "CAMERA",
+  "status": "ERROR",
+  "errorCode": "CAMERA_ERROR",
+  "message": "카메라 촬영에 실패했습니다."
+}
+```
+
+### 제품 분류 실패와 장비 상태 처리 분리
+
+- 기존 `ProductDetectionService`에서 제품 분류 `FAILED` 시 자동으로 `CAMERA = ERROR` 처리하던 로직 제거
+- 제품 분류 실패만으로 장비 오류를 판단하지 않도록 구조 수정
+- 제품 분류 결과와 실제 Component 상태의 역할을 분리
+  - `smart_sorting/camera/product_detection` → 제품 한 건의 분류 결과
+  - `smart_sorting/component/status/update` → 실제 장비 및 Component 상태
+- 제품 분류 `FAILED` 시 자동 `ERROR` Alert 생성 처리 제거
+- 제품 분류 실패 시 `CAMERA` 상태를 자동 변경하지 않도록 수정
+
+```text
+제품 분류 결과
+        ↓
+SUCCESS / FAILED
+        ↓
+product_detections 저장
+
+장비 상태
+        ↓
+NORMAL / WARNING / ERROR / OFFLINE
+        ↓
+system_components 갱신
+```
+
+- `FAILED`는 해당 제품의 분류 결과 실패를 의미하며 장비 고장을 의미하지 않도록 기준 정리
+- Confidence 부족과 같이 제품 분류에는 실패하지만 장비는 정상일 수 있는 상황을 별도로 처리할 수 있도록 구조 분리
+
+### 제품 분류 FAILED 처리 테스트
+
+- 기존 실행 파일이 남아 있어 수정 전 동작이 나타나는 문제 확인
+- 서버 Clean / Build / 재실행 후 수정된 로직으로 다시 테스트
+- MQTT 제품 분류 `FAILED` 메시지 수신 확인
+- `product_detections`에 `FAILED` 결과가 정상 저장되는 것을 확인
+- `[DETECTION] 제품 분류 실패` 로그 출력 확인
+- `CAMERA` 상태가 자동으로 `ERROR`로 변경되지 않는 것을 확인
+- 제품 분류 실패에 따른 Alert가 자동 생성되지 않는 것을 확인
+- `smart_sorting/alert` MQTT Publish가 발생하지 않는 것을 확인
+
+```text
+product_detection FAILED
+        ↓
+product_detections FAILED 저장
+        ↓
+[DETECTION] 제품 분류 실패
+        ↓
+장비 상태 변경 없음
+Alert 생성 없음
+```
+
+### 제품 분류 및 Component 오류 처리 기준 정리
+
+- 제어부와 서버에서 동일한 기준으로 제품 분류 결과와 장비 상태를 처리할 수 있도록 규격을 재정리
+- 제품 분류 기본 기준을 다음과 같이 정의
+  - Confidence `> 0.70` → `SUCCESS`
+  - Confidence `<= 0.70` → `FAILED`, `productTypeCode = null`
+  - Class 0 → `CANDY`
+  - Class 1 → `CHOCOLATE`
+- 제품 분류 실패와 Component 상태가 함께 발생하는 상황을 구분
+  - YOLO 객체 미검출
+  - YOLO Inference 오류
+  - YOLO 모델 로딩 오류
+  - Camera 촬영 실패
+  - 이미지 저장 실패
+  - Arduino Serial 연결 끊김
+  - Arduino Serial 통신 오류
+  - Serial 응답 Timeout
+  - IR Sensor 오류
+  - Stepper Motor 오류
+- Servo ACK Timeout 및 Servo ACK 불일치는 제품 인식 결과를 유지하면서 `SORTING_SERVO` 상태만 `ERROR`로 처리하도록 기준 정리
+- Buzzer 오류, Arduino 동작 오류, 알 수 없는 Arduino 명령은 제품 분류 결과와 직접 연결하지 않고 Component 상태만 처리하도록 분리
+- Component 정상 상태는 Alert 생성 대상이 아니라 현재 상태 동기화 용도로 사용하도록 정리
+  - `status = NORMAL`
+  - `errorCode = null`
+  - `priority = null`
+
+### Error Code 및 Alert Priority 기준 정리
+
+- 제어부와 서버가 공통으로 사용할 Error Code를 Hardware / Software 기준으로 구분
+- Hardware Error Code 정리
+  - `CAMERA_ERROR`
+  - `SERVO_ACK_TIMEOUT`
+  - `SERVO_ACK_ERROR`
+  - `STEPPER_ERROR`
+  - `IR_ERROR`
+  - `BUZZER_ERROR`
+  - `ARDUINO_ERROR`
+- Software Error Code 정리
+  - `YOLO_ERROR`
+  - `MODEL_LOAD_ERROR`
+  - `NO_DETECTION`
+  - `IMAGE_SAVE_ERROR`
+  - `SERIAL_DISCONNECTED`
+  - `SERIAL_ERROR`
+  - `SERIAL_TIMEOUT`
+  - `UNKNOWN_COMMAND`
+- Alert Priority 기준을 다음과 같이 정리
+  - `LOW` : 정상 처리 결과 및 단순 안내
+  - `MEDIUM` : 생산에 영향을 줄 수 있어 확인이 필요한 상태
+  - `HIGH` : 장비 정지, 연결 끊김 등 즉시 확인 및 조치가 필요한 상태
+- `NO_DETECTION`은 `CAMERA / WARNING / MEDIUM`으로 처리
+- 주요 장비 `ERROR`, `OFFLINE` 상태는 `HIGH` 우선순위를 사용하는 방향으로 정리
+
+### 제어부-서버 인터페이스 문서 작성
+
+- 제어부와 서버가 함께 참고할 수 있도록 `CONTROL_INTERFACE_SPEC.md` 작성
+- 제품 분류 결과 예시와 처리 기준 정리
+- Component 정상 및 오류 상태를 `componentCode`, `status`, `errorCode`, `message`, `priority` 기준으로 정리
+- 제품 분류 결과와 Component 상태가 동시에 발생하는 경우의 처리 기준 정리
+- Hardware / Software Error Code 정리
+- 실제 DB에서 사용하는 Component Code, Component Status, Alert Priority 정리
+- 제어부 → 서버 MQTT Topic 및 Payload 형식 정리
+
+```text
+smart_sorting/camera/product_detection
+smart_sorting/component/status/update
+```
+
+- `MQTT_BROKER`, `API_SERVER`, `MYSQL_DATABASE`와 같은 서버 공통 인프라 자체의 오류 처리 기준은 제어부용 처리 기준에서 제외
+- 실제 DB에 존재하는 Component이므로 `CONTROL_INTERFACE_SPEC.md`의 Component Code 목록에는 유지
+
+---
+
 ## 현재 완료 상태
 
 - [x] 데이터베이스 생성 스크립트
@@ -1301,6 +1496,10 @@ smart_sorting/component/status/update
 - [x] Entity 모델 및 `AppDbContext` 작성
 - [x] `ProductionTarget` 모델 및 `production_targets` 매핑
 - [x] 관리자 웹 개발용 CORS 설정
+- [x] `system_components` 구성요소 기준 재정리
+- [x] `VISION_MODULE` 제거 및 `CAMERA` 기준 통일
+- [x] `WORKER_DISPLAY` 포함 13개 Component 초기 데이터 반영
+- [x] 시스템 구성요소 초기 상태 `OFFLINE` 기준 적용
 
 ### 인증
 
@@ -1339,6 +1538,11 @@ smart_sorting/component/status/update
 - [x] 제품 감지 처리 로직 `ProductDetectionService` 분리
 - [x] 제품 분류 성공·실패 업무 로그 추가
 - [x] 초콜릿 세트 완료 시 `INFO` 알림 생성
+- [x] 제품 분류 MQTT Topic을 `smart_sorting/camera/product_detection`으로 변경
+- [x] 제품 분류 `FAILED`와 실제 장비 상태 처리 분리
+- [x] 제품 분류 `FAILED` 시 `CAMERA = ERROR` 자동 변경 제거
+- [x] 제품 분류 `FAILED` 시 자동 `ERROR` 알림 생성 제거
+- [x] 제품 분류 `FAILED` 처리 재테스트
 
 ### 시스템 구성요소
 
@@ -1348,7 +1552,11 @@ smart_sorting/component/status/update
 - [x] 시스템 구성요소 상태 변경 업무 로그 추가
 - [x] 알림 생성에 따른 구성요소 상태 변경 로그 추가
 - [x] 알림 복구에 따른 구성요소 상태 변경 로그 추가
-- [x] 작업자 LCD용 `WORKER_DISPLAY` componentCode 사용 결정
+- [x] 작업자 LCD용 `WORKER_DISPLAY` Component 반영
+- [x] 서버 DB 및 관련 코드의 `VISION_MODULE`을 `CAMERA`로 변경
+- [x] 실제 장비 상태 수신 시 `system_components.current_status` 갱신 구현
+- [x] 실제 장비 상태 변경 시 `status_updated_at` 갱신 구현
+- [x] 실제 상태가 변경된 경우에만 `[COMPONENT]` 로그 출력
 
 ### 알림
 
@@ -1357,11 +1565,10 @@ smart_sorting/component/status/update
 - [x] 알림 확인 처리 API
 - [x] 알림 복구 처리 API
 - [x] 알림 유형 및 우선순위 조합 검증
-- [x] 알림과 시스템 구성요소 상태 연동
+- [x] 수동 알림과 시스템 구성요소 상태 연동
 - [x] 알림과 현재 생산 세션 연결
 - [x] 알림과 제품 감지 결과 연결 구조 구현
 - [x] 동일 구성요소의 미복구 알림을 고려한 상태 복구 처리
-- [x] 제품 분류 실패 시 자동 `ERROR` 알림 생성
 - [x] 수동 알림 생성 시 MQTT Publish 연동
 - [x] 알림 복구 시 시스템 구성요소 상태 재계산
 - [x] 알림 복구에 따른 `component/status` MQTT Publish
@@ -1370,6 +1577,7 @@ smart_sorting/component/status/update
 - [x] 알림 복구 업무 로그 추가
 - [x] 알림 생성 → 구성요소 `NORMAL -> ERROR` 테스트
 - [x] 알림 복구 → 구성요소 `ERROR -> NORMAL` 테스트
+- [x] 제품 분류 `FAILED`와 자동 장비 오류·알림 생성을 분리하도록 구조 수정
 
 ### MQTT
 
@@ -1392,6 +1600,9 @@ smart_sorting/component/status/update
 - [x] MQTT 연결·수신 처리 오류 `ILogger` 적용
 - [x] `IHostApplicationLifetime`을 이용한 MQTT 연결 시작 시점 조정
 - [x] 서버 시작 로그 이후 MQTT 연결 로그 출력 확인
+- [x] `smart_sorting/component/status/update` Subscribe 구현
+- [x] Component 상태 메시지 Topic 분기 처리 구현
+- [x] Component 상태 MQTT 메시지 DB 반영 테스트
 
 ### 관리자 대시보드
 
@@ -1431,32 +1642,34 @@ smart_sorting/component/status/update
 - [x] 실제 장비 → 서버 상태 MQTT Topic 구조 정리
 - [x] `smart_sorting/component/status/update` Topic 사용 결정
 - [x] 실제 장비 상태와 `system_components` 연동 기준 정리
-- [x] 장비 이상 상태와 `alerts` 연동 기준 정리
-- [x] 실제 장비용 주요 `componentCode` 정리
-- [x] 제어부와 제품 분류 결과 / 장비 상태 메시지 역할 분리 확인
-- [x] `componentCode`, `status`, `eventCode`, `message` Payload 구조 결정
-- [x] `eventCode`를 별도 필드로 전달하는 방식 결정
-- [x] `NO_DETECTION`을 `CAMERA / WARNING`으로 처리하는 제어부 기준 확인
-- [x] 서버 구성요소 명칭을 `VISION_MODULE` 대신 `CAMERA`로 통일하기로 결정
+- [x] 제품 분류 결과와 장비 상태 메시지 역할 분리
+- [x] `componentCode`, `status`, `errorCode`, `message` Payload 구조 확정
+- [x] 허용 상태값 `NORMAL`, `WARNING`, `ERROR`, `OFFLINE` 정리
+- [x] `NO_DETECTION`을 `CAMERA / WARNING`으로 처리하는 기준 정리
+- [x] Hardware / Software Error Code 정리
+- [x] Alert Priority `LOW / MEDIUM / HIGH` 기준 정리
+- [x] 정상 상태에서 `errorCode = null`, `priority = null` 기준 정리
+- [x] 제품 분류 결과와 Component 상태가 동시에 발생하는 상황 처리 기준 정리
+- [x] 제품 분류와 직접 관계없는 Component 오류 처리 기준 분리
+- [x] `CONTROL_INTERFACE_SPEC.md` 작성
+- [x] 제어부 → 서버 MQTT Payload 예시 문서화
+- [x] 서버 공통 인프라 상태 판단 기준을 제어부용 인터페이스 문서에서 분리
 
 ---
 
 ## 미완료 상태
 
-- [ ] `system_components`에 `WORKER_DISPLAY` 실제 반영 확인
-- [ ] 서버 DB 및 코드의 `VISION_MODULE`을 `CAMERA`로 실제 변경
-- [ ] `ProductDetectionService`의 `FAILED -> 무조건 장비 ERROR` 처리 제거
-- [ ] `smart_sorting/component/status/update` Subscribe 구현
-- [ ] 실제 장비 상태 수신 DTO 구현
-- [ ] `componentCode` 검증
-- [ ] `status` 검증
-- [ ] `eventCode` 처리
-- [ ] 실제 장비 상태 수신 시 `system_components` DB 갱신 구현
-- [ ] 실제 장비 `WARNING / ERROR / OFFLINE` 수신 시 Alert 생성 구현
-- [ ] `NO_DETECTION` 수신 시 `CAMERA = WARNING` 처리
-- [ ] 실제 장비 상태 처리 후 `component/status` MQTT Publish 연동
-- [ ] 실제 장비 Alert 생성 후 `alert` MQTT Publish 연동
-- [ ] 실제 장비 상태 MQTT 처리 테스트
+- [ ] `component/status/update` 수신 시 `errorCode`, `message` 검증 및 실제 처리
+- [ ] Component 상태 이벤트 기반 Alert 자동 생성 구현
+- [ ] `NO_DETECTION` 수신 시 `CAMERA = WARNING` + `WARNING` Alert 생성 구현
+- [ ] Component `ERROR / WARNING / OFFLINE` 상태별 Alert Type 및 Priority 자동 결정 구현
+- [ ] 동일 상태에서 새로운 `errorCode`가 전달되는 경우의 중복 Alert 처리 기준 구현
+- [ ] Component `NORMAL` 복구 시 기존 미복구 Alert 처리 방식 구현
+- [ ] 실제 장비 상태 처리 후 `smart_sorting/component/status` MQTT Publish 연동
+- [ ] 실제 장비 Alert 생성 후 `smart_sorting/alert` MQTT Publish 연동
+- [ ] Component 상태 MQTT 전체 시나리오 테스트
+- [ ] MQTT Broker 연결 끊김 및 재연결 처리 보강
+- [ ] MQTT Publisher / Subscriber 예외 및 재시도 처리 보강
 - [ ] 관리자 웹 생산 목표 API 실제 화면 연동
 - [ ] 작업자 Qt REST API 실제 연동
 - [ ] 관리자 웹 실제 장비 `component/status` 연동 확인
@@ -1467,184 +1680,165 @@ smart_sorting/component/status/update
 
 ## 다음 작업
 
-### 1. 서버 구성요소 코드 정리
+### 1. Component 상태 이벤트 처리 확장
 
-기존 서버에서 사용 중인:
+현재 `smart_sorting/component/status/update` 수신 후
+`system_components.current_status`를 갱신하는 기능까지 구현되어 있다.
 
-```text
-VISION_MODULE
-```
+다음 단계에서는 함께 전달되는 `errorCode`, `message`를 실제 오류 처리에 사용한다.
 
-을 제어부 규격에 맞춰:
-
-```text
-CAMERA
-```
-
-로 통일한다.
-
-확인 대상:
-
-- `system_components` DB 데이터
-- `ProductDetectionService`
-- `AlertsController`
-- 테스트 데이터
-- 관련 MQTT Payload
-
----
-
-### 2. 제품 분류 실패 처리 구조 수정
-
-현재 `ProductDetectionService`에서는 `classificationStatus = FAILED`일 때
-장비 상태까지 `ERROR`로 변경하는 구조가 존재한다.
-
-앞으로는 역할을 다음과 같이 분리한다.
-
-```text
-smart_sorting/vision/product_detection
-→ 해당 제품의 분류 결과 처리
-
-smart_sorting/component/status/update
-→ 실제 장비 상태 및 오류 원인 처리
-```
-
-따라서 제품 분류 `FAILED`만으로
-`CAMERA = ERROR`를 결정하지 않도록 수정한다.
-
-예:
-
-```text
-제품 분류 실패
-classificationStatus = FAILED
-
-+
-
-장비 상태
-CAMERA / WARNING / NO_DETECTION
-```
-
-두 메시지는 서로 다른 의미로 각각 처리한다.
-
----
-
-### 3. 실제 장비 상태 MQTT Subscribe 구현
-
-Topic:
-
-```text
-smart_sorting/component/status/update
-```
-
-Payload:
+Payload 기준:
 
 ```json
 {
   "componentCode": "CAMERA",
   "status": "ERROR",
-  "eventCode": "CAMERA_ERROR",
-  "message": "Camera capture failed"
+  "errorCode": "CAMERA_ERROR",
+  "message": "카메라 촬영에 실패했습니다."
 }
 ```
 
-수신 시 다음 필드를 검증한다.
+검증 및 처리 대상:
 
 - `componentCode`
 - `status`
-- `eventCode`
+- `errorCode`
 - `message`
+
+서버는 `message` 문자열을 분석하여 오류 종류를 추측하지 않고
+`errorCode`를 기준으로 이벤트 종류를 판단한다.
 
 ---
 
-### 4. 실제 장비 상태 DB 처리 구현
+### 2. Component 상태 기반 Alert 자동 생성
 
-수신한 `componentCode`에 해당하는
-`system_components` 데이터를 조회한다.
+제어부에서 이상 상태가 전달된 경우
+Component 상태 갱신과 함께 Alert를 생성하도록 처리한다.
 
-처리 항목:
+기본 흐름:
 
-- `current_status` 갱신
-- `status_updated_at` 갱신
+```text
+component/status/update 수신
+        ↓
+Component 상태 갱신
+        ↓
+status / errorCode 확인
+        ↓
+Alert 생성 여부 결정
+        ↓
+alerts 저장
+```
 
-상태 기준:
+기준:
 
 ```text
 NORMAL
-→ 정상 상태 갱신
+→ Component 상태만 갱신
+→ Alert 생성 안 함
 
 WARNING
-→ 장비 상태 WARNING
+→ Component = WARNING
 → WARNING Alert 생성
 
 ERROR
-→ 장비 상태 ERROR
+→ Component = ERROR
 → ERROR Alert 생성
 
 OFFLINE
-→ 장비 상태 OFFLINE
-→ 연결 오류 Alert 생성
+→ Component = OFFLINE
+→ 오류 성격에 맞는 Alert 생성
 ```
 
 ---
 
-### 5. eventCode 기반 이벤트 처리
+### 3. Error Code 및 Priority 매핑 구현
 
-제어부에서 전달받은 `eventCode`를 기준으로
-이벤트 종류를 구분한다.
+`CONTROL_INTERFACE_SPEC.md`에서 정리한 Error Code를 기준으로
+Alert Type과 Priority를 서버에서 결정하도록 구현한다.
 
 예:
 
 ```text
-CAMERA_ERROR
-SERVO_ACK_TIMEOUT
-SERVO_ACK_ERROR
-STEPPER_ERROR
-IR_ERROR
-SERIAL_DISCONNECTED
-SERIAL_ERROR
-SERIAL_TIMEOUT
-YOLO_ERROR
-MODEL_LOAD_ERROR
-NO_DETECTION
-IMAGE_SAVE_ERROR
-NETWORK_ERROR
-DATA_SEND_ERROR
-```
-
-특히:
-
-```text
 NO_DETECTION
 → CAMERA / WARNING
+→ Priority MEDIUM
+
+CAMERA_ERROR
+→ CAMERA / ERROR
+→ Priority HIGH
+
+SERVO_ACK_TIMEOUT
+→ SORTING_SERVO / ERROR
+→ Priority HIGH
+
+SERIAL_DISCONNECTED
+→ ARDUINO / OFFLINE
+→ Priority HIGH
 ```
 
-으로 처리한다.
-
-서버는 `message` 문자열을 분석하여 오류 종류를 추측하지 않고
-`eventCode`를 기준으로 처리한다.
+제어부에서 Priority를 직접 전달하지 않고
+서버가 `status`, `errorCode` 기준으로 결정하는 구조를 사용한다.
 
 ---
 
-### 6. 장비 상태 처리 결과 MQTT Publish
+### 4. Component 정상 복구 처리
 
-상태 변경 후:
+제어부에서 `NORMAL` 상태가 전달되면
+현재 Component 상태를 정상으로 갱신한다.
+
+```text
+component/status/update
+        ↓
+status = NORMAL
+        ↓
+system_components.current_status = NORMAL
+```
+
+추가로 해당 Component의 기존 미복구 Alert를
+어떤 기준으로 복구 처리할지 구현한다.
+
+정상 상태에서는:
+
+```text
+errorCode = null
+priority = null
+```
+
+을 기준으로 사용한다.
+
+---
+
+### 5. 장비 상태 처리 결과 MQTT Publish
+
+제어부 상태 메시지 처리 후 실제 Component 상태가 변경된 경우:
 
 ```text
 smart_sorting/component/status
 ```
 
-으로 클라이언트에 전달한다.
+Topic으로 변경된 상태를 전달한다.
 
-Alert가 새로 생성된 경우:
+새 Alert가 생성된 경우:
 
 ```text
 smart_sorting/alert
 ```
 
-으로 알림을 전달한다.
+Topic으로 알림을 전달한다.
+
+제품 분류 결과와 Component 상태는 계속 별도의 흐름으로 유지한다.
+
+```text
+smart_sorting/camera/product_detection
+→ 제품 분류 결과
+
+smart_sorting/component/status/update
+→ 실제 Component 상태 및 오류
+```
 
 ---
 
-### 7. MQTT Explorer 테스트
+### 6. MQTT Explorer 전체 시나리오 테스트
 
 다음 상태를 순서대로 테스트한다.
 
@@ -1655,18 +1849,22 @@ ERROR
 OFFLINE
 ```
 
-추가 확인:
+주요 테스트 예:
 
-- `CAMERA / WARNING / NO_DETECTION`
-- `CAMERA / ERROR / CAMERA_ERROR`
-- `SORTING_SERVO / ERROR / SERVO_ACK_TIMEOUT`
-- `CONVEYOR / OFFLINE / SERIAL_DISCONNECTED`
+```text
+CAMERA / WARNING / NO_DETECTION
+CAMERA / ERROR / CAMERA_ERROR
+SORTING_SERVO / ERROR / SERVO_ACK_TIMEOUT
+ARDUINO / OFFLINE / SERIAL_DISCONNECTED
+BUZZER / ERROR / BUZZER_ERROR
+```
 
 각 테스트에서 확인할 항목:
 
 - MQTT Receive 로그
 - `system_components` DB 변경
 - Alert 생성 여부
+- Alert Type / Priority
 - `component/status` Publish
 - `alert` Publish
 - `[COMPONENT]` 로그
@@ -1674,9 +1872,27 @@ OFFLINE
 
 ---
 
+### 7. MQTT 연결 안정성 보강
+
+실제 Raspberry Pi 및 클라이언트 연동 전에
+MQTT 연결 끊김 상황에 대한 처리를 보강한다.
+
+확인 항목:
+
+- MQTT Broker 연결 끊김 감지
+- Subscriber 재연결
+- Topic 재구독
+- Publisher 연결 실패 처리
+- Publish 실패 및 재시도 처리
+
+MQTT Broker 자체 상태 및 서버 공통 인프라 오류 처리는
+제어부용 `CONTROL_INTERFACE_SPEC.md`와 분리하여 서버 기준으로 별도 정리한다.
+
+---
+
 ### 8. 실제 클라이언트 연동
 
-서버 기능 완료 후 각 담당 클라이언트와 연결한다.
+서버의 Component 상태 및 Alert 처리 기능 완료 후 각 담당 클라이언트와 연결한다.
 
 - 관리자 웹 생산 목표 API 연동
 - 관리자 웹 장비 상태 MQTT 연동
@@ -1699,12 +1915,18 @@ MQTT Broker
 ASP.NET Core Server
    ↓             ↓
 MySQL        MQTT Publish
-                 ↓
-        ┌────────┴────────┐
-        ↓                 ↓
-   관리자 Web          작업자 Qt
+                  ↓
+        ┌────┴────┐
+        ↓                  ↓
+   관리자 Web           작업자 Qt
 ```
 
-최종적으로 제품 감지, 생산량 갱신, 장비 상태 변경,
-Alert 생성·확인·복구, 관리자 화면, 작업자 화면까지
-전체 흐름을 테스트한다.
+최종적으로 다음 흐름을 전체 테스트한다.
+
+- 제품 감지 및 분류 결과 저장
+- 생산량 갱신
+- Component 상태 변경
+- Error Code 기반 Alert 생성
+- Alert 확인 및 복구
+- 관리자 화면 실시간 상태 반영
+- 작업자 화면 및 라인 제어
