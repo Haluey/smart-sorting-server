@@ -9,6 +9,12 @@
         // 사탕 목표 세트 수
         public int TargetCandySetCount { get; set; }
 
+        public int? NextTargetChocolateSetCount { get; set; }
+
+        public int? NextTargetCandySetCount { get; set; }
+
+        public int DailyWorkerCount { get; set; }
+
         // 마지막 수정 일시
         public DateTime UpdatedAt { get; set; }
     }

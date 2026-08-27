@@ -162,6 +162,16 @@ namespace SmartSortingServer.Data {
                     .HasColumnName("target_candy_set_count")
                     .IsRequired();
 
+                entity.Property(e => e.NextTargetChocolateSetCount)
+                    .HasColumnName("next_target_chocolate_set_count");
+
+                entity.Property(e => e.NextTargetCandySetCount)
+                    .HasColumnName("next_target_candy_set_count");
+
+                entity.Property(e => e.DailyWorkerCount)
+                    .HasColumnName("daily_worker_count")
+                    .IsRequired();
+
                 // 마지막 수정 일시
                 entity.Property(e => e.UpdatedAt)
                     .HasColumnName("updated_at");

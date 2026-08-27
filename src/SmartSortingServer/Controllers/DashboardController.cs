@@ -54,9 +54,16 @@ namespace SmartSortingServer.Controllers {
                         p => p.ProductTypeCode == "CHOCOLATE"
                     );
 
-            if (chocolateType == null) {
+            // 사탕 제품 유형 조회
+            var candyType =
+                await _context.ProductTypes
+                    .FirstOrDefaultAsync(
+                        p => p.ProductTypeCode == "CANDY"
+                    );
+
+            if (chocolateType == null || candyType == null) {
                 return BadRequest(new {
-                    message = "초콜릿 제품 유형 정보를 찾을 수 없습니다."
+                    message = "제품 유형 정보를 찾을 수 없습니다."
                 });
             }
 
@@ -69,6 +76,39 @@ namespace SmartSortingServer.Controllers {
             int chocolateSetCount =
                 chocolateType.UnitPerSet > 0
                     ? chocolateCount / chocolateType.UnitPerSet
+                    : 0;
+
+            int candySetCount =
+                candyType.UnitPerSet > 0
+                    ? candyCount / candyType.UnitPerSet
+                    : 0;
+
+            // 현재 하루 생산 목표 조회
+            var target = await _context.ProductionTargets
+                .FirstOrDefaultAsync(t => t.TargetId == 1);
+
+            if (target == null) {
+                return BadRequest(new {
+                    message = "생산 목표가 설정되어 있지 않습니다."
+                });
+            }
+
+            int chocolateProgress =
+                target.TargetChocolateSetCount > 0
+                    ? (int)Math.Round(
+                        (double)chocolateSetCount
+                        / target.TargetChocolateSetCount
+                        * 100
+                    )
+                    : 0;
+
+            int candyProgress =
+                target.TargetCandySetCount > 0
+                    ? (int)Math.Round(
+                        (double)candySetCount
+                        / target.TargetCandySetCount
+                        * 100
+                    )
                     : 0;
 
             int successCount =
@@ -90,7 +130,16 @@ namespace SmartSortingServer.Controllers {
             return Ok(new {
                 chocolateCount,
                 chocolateSetCount,
+                targetChocolateSetCount =
+                    target.TargetChocolateSetCount,
+                chocolateProgress,
+
                 candyCount,
+                candySetCount,
+                targetCandySetCount =
+                    target.TargetCandySetCount,
+                candyProgress,
+
                 successCount,
                 failedCount,
                 activeAlertCount

@@ -11,8 +11,6 @@ namespace SmartSortingServer.Controllers {
     [Route("api/production-sessions")]
     [Authorize]
     public class ProductionSessionsController : ControllerBase {
-        private const int DailyWorkerCount = 3;
-
         private readonly AppDbContext _context;
         private readonly MqttPublisherService _mqttPublisher;
         private readonly ILogger<ProductionSessionsController> _logger;
@@ -66,15 +64,6 @@ namespace SmartSortingServer.Controllers {
                 });
             }
 
-            // 생산 목표 유효성 확인
-            if (target.TargetChocolateSetCount < DailyWorkerCount ||
-                target.TargetCandySetCount < DailyWorkerCount) {
-
-                return BadRequest(new {
-                    message = $"하루 생산 목표는 작업 인원({DailyWorkerCount}명) 이상이어야 합니다."
-                });
-            }
-
             // 오늘 날짜 범위
             DateTime today = DateTime.Today;
             DateTime tomorrow = today.AddDays(1);
@@ -87,8 +76,45 @@ namespace SmartSortingServer.Controllers {
                         s.StartedAt < tomorrow
                     );
 
+            /*
+             * 오늘 첫 생산 작업을 시작하는 경우
+             * 예약된 다음 목표가 있으면 현재 목표로 적용
+             */
+            if (todaySessionCount == 0 &&
+                target.NextTargetChocolateSetCount.HasValue &&
+                target.NextTargetCandySetCount.HasValue) {
+
+                target.TargetChocolateSetCount =
+                    target.NextTargetChocolateSetCount.Value;
+
+                target.TargetCandySetCount =
+                    target.NextTargetCandySetCount.Value;
+
+                target.NextTargetChocolateSetCount = null;
+                target.NextTargetCandySetCount = null;
+
+                target.UpdatedAt = DateTime.Now;
+
+                await _context.SaveChangesAsync();
+
+                _logger.LogInformation(
+                    "[TARGET] 예약 생산 목표 적용 - ChocolateSet: {ChocolateSet}, CandySet: {CandySet}",
+                    target.TargetChocolateSetCount,
+                    target.TargetCandySetCount
+                );
+            }
+
+            // 생산 목표 유효성 확인
+            if (target.TargetChocolateSetCount < target.DailyWorkerCount ||
+                target.TargetCandySetCount < target.DailyWorkerCount) {
+
+                return BadRequest(new {
+                    message = $"하루 생산 목표는 작업 인원({target.DailyWorkerCount}명) 이상이어야 합니다."
+                });
+            }
+
             // 하루 최대 생산 세션 수 확인
-            if (todaySessionCount >= DailyWorkerCount) {
+            if (todaySessionCount >= target.DailyWorkerCount) {
                 return BadRequest(new {
                     message = "오늘 생성 가능한 생산 세션이 모두 사용되었습니다."
                 });
@@ -99,17 +125,17 @@ namespace SmartSortingServer.Controllers {
 
             // 초콜릿 기본 세션 목표 및 나머지
             int chocolateBaseTarget =
-                target.TargetChocolateSetCount / DailyWorkerCount;
+                target.TargetChocolateSetCount / target.DailyWorkerCount;
 
             int chocolateRemainder =
-                target.TargetChocolateSetCount % DailyWorkerCount;
+                target.TargetChocolateSetCount % target.DailyWorkerCount;
 
             // 사탕 기본 세션 목표 및 나머지
             int candyBaseTarget =
-                target.TargetCandySetCount / DailyWorkerCount;
+                target.TargetCandySetCount / target.DailyWorkerCount;
 
             int candyRemainder =
-                target.TargetCandySetCount % DailyWorkerCount;
+                target.TargetCandySetCount % target.DailyWorkerCount;
 
             // 현재 세션에 배정할 목표
             int sessionChocolateTarget =

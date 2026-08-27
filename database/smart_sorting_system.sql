@@ -92,8 +92,18 @@ CREATE TABLE system_components (
 
 CREATE TABLE production_targets (
     target_id INT PRIMARY KEY,
+
+    -- 현재 적용 중인 하루 생산 목표
     target_chocolate_set_count INT NOT NULL,
     target_candy_set_count INT NOT NULL,
+
+    -- 다음 날 적용할 예약 생산 목표
+    next_target_chocolate_set_count INT NULL,
+    next_target_candy_set_count INT NULL,
+
+    -- 하루 작업 인원 수
+    daily_worker_count INT NOT NULL DEFAULT 3,
+
     updated_at DATETIME NOT NULL
         DEFAULT CURRENT_TIMESTAMP
         ON UPDATE CURRENT_TIMESTAMP,
@@ -102,7 +112,22 @@ CREATE TABLE production_targets (
         CHECK (target_chocolate_set_count > 0),
 
     CONSTRAINT chk_production_targets_candy
-        CHECK (target_candy_set_count > 0)
+        CHECK (target_candy_set_count > 0),
+
+    CONSTRAINT chk_production_targets_next_chocolate
+        CHECK (
+            next_target_chocolate_set_count IS NULL
+            OR next_target_chocolate_set_count > 0
+        ),
+
+    CONSTRAINT chk_production_targets_next_candy
+        CHECK (
+            next_target_candy_set_count IS NULL
+            OR next_target_candy_set_count > 0
+        ),
+
+    CONSTRAINT chk_production_targets_daily_worker_count
+        CHECK (daily_worker_count > 0)
 );
 
 
@@ -406,11 +431,17 @@ INSERT INTO system_components (
 INSERT INTO production_targets (
     target_id,
     target_chocolate_set_count,
-    target_candy_set_count
+    target_candy_set_count,
+    next_target_chocolate_set_count,
+    next_target_candy_set_count,
+    daily_worker_count
 ) VALUES (
     1,
     10,
-    100
+    100,
+    NULL,
+    NULL,
+    3
 );
 
 
