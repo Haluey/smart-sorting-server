@@ -6,8 +6,8 @@
         // 초콜릿 목표 세트 수
         public int TargetChocolateSetCount { get; set; }
 
-        // 사탕 목표 수량
-        public int TargetCandyCount { get; set; }
+        // 사탕 목표 세트 수
+        public int TargetCandySetCount { get; set; }
 
         // 마지막 수정 일시
         public DateTime UpdatedAt { get; set; }

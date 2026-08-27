@@ -1476,6 +1476,183 @@ smart_sorting/component/status/update
 
 ---
 
+## 2026-08-26
+
+### 생산 목표 단위 세트 기준 통일
+
+- 생산 목표 단위를 초콜릿과 사탕 모두 **세트 수 기준**으로 통일
+- 기존 사탕 목표 컬럼 및 필드의 `Count` 의미를 세트 기준으로 명확하게 변경
+  - `target_candy_count` → `target_candy_set_count`
+  - `TargetCandyCount` → `TargetCandySetCount`
+- `production_targets`, `production_sessions`에서 동일한 명칭을 사용하도록 정리
+- 초콜릿과 사탕의 실제 생산량은 기존과 동일하게 낱개 수로 저장
+  - `chocolate_count`
+  - `candy_count`
+- 목표 세트 수와 실제 생산 개수를 분리하여 관리하도록 기준 정리
+
+```text
+생산 목표
+        ↓
+세트 단위로 저장
+
+target_chocolate_set_count
+target_candy_set_count
+
+실제 생산량
+        ↓
+낱개 단위로 저장
+
+chocolate_count
+candy_count
+```
+
+### 데이터베이스 스키마 및 Entity 매핑 수정
+
+- `production_targets`의 사탕 목표 컬럼을 `target_candy_set_count`로 변경
+- `production_sessions`의 사탕 목표 컬럼을 `target_candy_set_count`로 변경
+- 변경된 스키마를 기준으로 데이터베이스를 다시 생성
+- `ProductionTarget`, `ProductionSession` Entity의 속성명을 변경된 컬럼 기준으로 수정
+- `AppDbContext` Fluent API 매핑을 변경된 컬럼명에 맞춰 수정
+
+```text
+ProductionTarget.TargetCandySetCount
+        ↓
+production_targets.target_candy_set_count
+
+ProductionSession.TargetCandySetCount
+        ↓
+production_sessions.target_candy_set_count
+```
+
+### unit_per_set 기반 목표 낱개 수 계산 적용
+
+- 목표 생산량을 DB에 낱개 수로 중복 저장하지 않고 `product_types.unit_per_set`을 이용하여 계산하도록 정리
+- 초콜릿과 사탕 모두 동일한 계산 방식을 사용하도록 수정
+
+```text
+목표 낱개 수
+= 목표 세트 수 × unit_per_set
+```
+
+예시:
+
+```text
+CHOCOLATE
+15세트 × 10개 = 150개
+
+CANDY
+50세트 × 1개 = 50개
+```
+
+- `ProductionSessionsController`의 생산 시작 및 종료 처리에 해당 계산 방식 적용
+- `ProductDetectionService`의 생산 현황 계산에도 동일한 기준 적용
+- 제품별 세트 수는 실제 생산 개수를 `unit_per_set`으로 나누어 계산하도록 유지
+
+```text
+현재 세트 수
+= 현재 생산 개수 / unit_per_set
+```
+
+### 생산 목표 REST API 필드 정리
+
+- 생산 목표 조회 및 변경 API에서 사탕 목표 필드를 세트 기준으로 변경
+- 요청과 응답에서 초콜릿과 사탕의 목표 필드 형식을 통일
+
+```text
+targetChocolateSetCount
+targetCandySetCount
+```
+
+사용 API:
+
+```text
+GET /api/production-targets/current
+PUT /api/production-targets/current
+```
+
+예시 요청:
+
+```json
+{
+  "targetChocolateSetCount": 15,
+  "targetCandySetCount": 50
+}
+```
+
+- 생산 세션 시작 및 현재 세션 조회, 종료 응답에서도 `targetCandySetCount`를 사용하도록 수정
+
+### 생산 현황 MQTT 계산 기준 수정
+
+- `smart_sorting/production/status`의 `targetCount`를 목표 세트 수와 `unit_per_set`을 이용하여 계산하도록 수정
+- `currentCount`는 실제 생산된 낱개 수를 유지
+- `setCount`는 실제 생산량을 제품별 `unit_per_set`으로 나눈 값으로 계산
+- `progress`는 실제 생산 낱개 수와 목표 낱개 수를 기준으로 계산
+
+```text
+목표 세트 수
+        ↓
+× unit_per_set
+        ↓
+targetCount
+
+현재 생산 개수
+        ↓
+currentCount
+
+현재 생산 개수 / unit_per_set
+        ↓
+setCount
+
+currentCount / targetCount × 100
+        ↓
+progress
+```
+
+- 생산 시작, 제품 감지, 생산 종료 시 동일한 계산 기준으로 MQTT Payload가 생성되도록 정리
+
+### 생산 목표 및 세션 동작 테스트
+
+- 생산 목표 조회 API 테스트
+- 생산 목표 변경 API 테스트
+- 변경한 목표가 DB에 정상 저장되는 것을 확인
+- 생산 세션 생성 시 목표 세트 수가 세션에 정상 저장되는 것을 확인
+- 생산 시작 MQTT 메시지의 목표 낱개 수 계산 확인
+
+테스트 예시:
+
+```text
+초콜릿 목표 = 15세트
+초콜릿 unit_per_set = 10
+→ targetCount = 150
+
+사탕 목표 = 50세트
+사탕 unit_per_set = 1
+→ targetCount = 50
+```
+
+### 제품 감지 및 생산량 계산 테스트
+
+- `CHOCOLATE / SUCCESS` 제품 감지 메시지 수신 후 `chocolate_count` 증가 확인
+- `CANDY / SUCCESS` 제품 감지 메시지 수신 후 `candy_count` 증가 확인
+- 제품 감지 후 MQTT 생산 현황의 `currentCount`, `setCount`, `progress` 변경 확인
+- `unit_per_set` 값이 계산에 실제로 적용되는지 확인하기 위해 사탕의 `unit_per_set`을 임시로 `5`로 변경하여 테스트
+- 사탕 목표 낱개 수와 현재 세트 수가 변경된 `unit_per_set` 기준으로 계산되는 것을 확인
+- 테스트 후 사탕의 `unit_per_set`을 기존 값 `1`로 복원
+
+### 생산 세션 종료 테스트
+
+- 목표 수량을 달성하지 않은 상태에서 생산 세션 종료 테스트
+- 미달성 상태에서 세션이 `CANCELLED`로 변경되는 것을 확인
+- 종료 시 MQTT 생산 현황과 DB 상태가 함께 변경되는 것을 확인
+
+- 작은 목표값을 설정한 뒤 목표 수량만큼 제품 감지 데이터를 입력하여 완료 테스트
+- 초콜릿과 사탕 목표를 모두 달성한 상태에서 생산 세션 종료
+- 세션 상태가 `COMPLETED`로 변경되는 것을 확인
+- 제품별 진행률이 `100%`로 계산되는 것을 확인
+- 종료 MQTT 메시지와 DB 저장 결과가 동일한 기준으로 반영되는 것을 확인
+
+---
+
 ## 현재 완료 상태
 
 - [x] 데이터베이스 생성 스크립트
@@ -1500,6 +1677,13 @@ smart_sorting/component/status/update
 - [x] `VISION_MODULE` 제거 및 `CAMERA` 기준 통일
 - [x] `WORKER_DISPLAY` 포함 13개 Component 초기 데이터 반영
 - [x] 시스템 구성요소 초기 상태 `OFFLINE` 기준 적용
+- [x] 초콜릿·사탕 생산 목표를 모두 세트 단위로 통일
+- [x] `target_candy_count`를 `target_candy_set_count`로 변경
+- [x] `TargetCandyCount`를 `TargetCandySetCount`로 변경
+- [x] 변경된 생산 목표 구조에 맞춰 DB 스키마 재생성
+- [x] `ProductionTarget`, `ProductionSession` Entity 수정
+- [x] `AppDbContext` Fluent API 매핑 수정
+- [x] 실제 생산 수량은 낱개 단위, 목표는 세트 단위로 분리
 
 ### 인증
 
@@ -1513,22 +1697,37 @@ smart_sorting/component/status/update
 - [x] 생산 목표 조회 API
 - [x] 생산 목표 설정 API
 - [x] 생산 목표 조회·설정 API 테스트
-- [x] 생산 목표 0 이하 입력 방지
 - [x] 생산 목표 변경 업무 로그 추가
+- [x] 초콜릿·사탕 목표 필드를 `SetCount` 기준으로 통일
+- [x] `targetChocolateSetCount`, `targetCandySetCount` 요청·응답 구조 적용
+- [x] `unit_per_set` 기반 목표 낱개 수 계산 적용
+- [x] 목표 세트 수와 실제 목표 낱개 수 계산 구조 검증
+- [x] 생산 목표 변경 후 DB 저장 결과 확인
+- [x] 하루 작업 인원 `3명` 기준 상수 추가
+- [x] 하루 목표가 작업 인원보다 작은 경우 세션 생성 방지 로직 추가
 
 ### 생산 작업
 
 - [x] 생산 작업 시작 API
-- [x] 생산 시작 시 DB의 현재 생산 목표 적용 구조 구현
-- [x] 생산 시작 API 사용자 Claim 조회 오류 수정
 - [x] 현재 생산 작업 조회 API
 - [x] 생산 작업 종료 API
-- [x] 생산 작업 종료 시 목표 달성 여부 판단
+- [x] 생산 작업 시작 API 사용자 Claim 조회 오류 수정
 - [x] 활성 생산 작업 중복 생성 방지
-- [x] 변경된 생산 목표·생산 시작 구조 전체 흐름 테스트
-- [x] 생산 중 목표 변경 시 현재 생산 세션 목표 유지 확인
-- [x] 다음 생산 세션부터 변경된 목표 적용 확인
+- [x] 생산 작업 종료 시 목표 달성 여부 판단
 - [x] 생산 작업 시작·종료 업무 로그 추가
+- [x] 생산 세션 목표를 세트 단위로 저장하도록 수정
+- [x] 생산 시작 시 `unit_per_set`을 이용한 목표 낱개 수 계산
+- [x] 생산 종료 시 `unit_per_set`을 이용한 목표 달성 여부 계산
+- [x] 목표 미달성 시 `CANCELLED` 처리 테스트
+- [x] 목표 달성 시 `COMPLETED` 처리 테스트
+- [x] 종료 시 제품별 진행률 `100%` 계산 확인
+- [x] 생산 시작·종료 MQTT Payload의 목표량 계산 확인
+- [x] `started_at` 기준 오늘 생성된 생산 세션 수 조회 로직 추가
+- [x] 하루 최대 3개 생산 세션 생성 제한 로직 추가
+- [x] 오늘 세션 순번 계산 로직 추가
+- [x] 하루 목표를 3개 세션으로 나누는 기본 목표 계산 로직 추가
+- [x] 나머지 목표를 앞 세션부터 1개씩 분배하는 로직 추가
+- [x] 계산된 세션별 목표를 `production_sessions`에 저장하도록 수정
 
 ### 제품 감지
 
@@ -1543,6 +1742,11 @@ smart_sorting/component/status/update
 - [x] 제품 분류 `FAILED` 시 `CAMERA = ERROR` 자동 변경 제거
 - [x] 제품 분류 `FAILED` 시 자동 `ERROR` 알림 생성 제거
 - [x] 제품 분류 `FAILED` 처리 재테스트
+- [x] `CHOCOLATE / SUCCESS` 수신 시 생산량 증가 확인
+- [x] `CANDY / SUCCESS` 수신 시 생산량 증가 확인
+- [x] 제품 감지 후 `currentCount`, `setCount`, `progress` MQTT 갱신 확인
+- [x] 사탕 `unit_per_set = 5` 임시 변경을 통한 계산 로직 검증
+- [x] 테스트 후 사탕 `unit_per_set = 1` 복원
 
 ### 시스템 구성요소
 
@@ -1603,6 +1807,8 @@ smart_sorting/component/status/update
 - [x] `smart_sorting/component/status/update` Subscribe 구현
 - [x] Component 상태 메시지 Topic 분기 처리 구현
 - [x] Component 상태 MQTT 메시지 DB 반영 테스트
+- [x] 생산 현황 MQTT의 `targetCount`를 세트 목표 × `unit_per_set` 기준으로 통일
+- [x] 생산 현황 MQTT의 `setCount`, `progress` 계산 기준 통일
 
 ### 관리자 대시보드
 
@@ -1659,6 +1865,20 @@ smart_sorting/component/status/update
 
 ## 미완료 상태
 
+### 생산 목표 / 생산 작업
+
+- [ ] 하루 목표를 3개 세션으로 분배하는 로직 빌드 및 실제 동작 테스트
+- [ ] 목표가 3으로 나누어떨어지는 경우 세션별 목표 분배 확인
+- [ ] 목표에 나머지가 발생하는 경우 `34 / 33 / 33` 형태의 분배 확인
+- [ ] 하루 세 번째 세션 생성 후 네 번째 세션 생성 차단 확인
+- [ ] 하루 목표가 작업 인원 3명보다 작은 경우 요청 차단 확인
+- [ ] 세션별 목표 변경 후 Qt에서 목표값이 정상 표시되는지 확인
+- [ ] 관리자 웹에서 사용할 하루 누적 생산량 계산 기준 최종 확인
+- [ ] 관리자 웹의 하루 목표 / 하루 누적 / 진행률 표시 구조 최종 연동
+- [ ] 현재 관리자 대시보드 오늘 생산량 요약 API가 변경된 목표 구조와 일치하는지 재검토
+
+### Component 상태 / Alert
+
 - [ ] `component/status/update` 수신 시 `errorCode`, `message` 검증 및 실제 처리
 - [ ] Component 상태 이벤트 기반 Alert 자동 생성 구현
 - [ ] `NO_DETECTION` 수신 시 `CAMERA = WARNING` + `WARNING` Alert 생성 구현
@@ -1668,6 +1888,9 @@ smart_sorting/component/status/update
 - [ ] 실제 장비 상태 처리 후 `smart_sorting/component/status` MQTT Publish 연동
 - [ ] 실제 장비 Alert 생성 후 `smart_sorting/alert` MQTT Publish 연동
 - [ ] Component 상태 MQTT 전체 시나리오 테스트
+
+### MQTT 안정성 / 클라이언트 연동
+
 - [ ] MQTT Broker 연결 끊김 및 재연결 처리 보강
 - [ ] MQTT Publisher / Subscriber 예외 및 재시도 처리 보강
 - [ ] 관리자 웹 생산 목표 API 실제 화면 연동
@@ -1680,10 +1903,123 @@ smart_sorting/component/status/update
 
 ## 다음 작업
 
-### 1. Component 상태 이벤트 처리 확장
+### 1. 세션 목표 3분할 로직 검증
 
-현재 `smart_sorting/component/status/update` 수신 후
-`system_components.current_status`를 갱신하는 기능까지 구현되어 있다.
+현재 생산 세션 시작 시 하루 생산 목표를 작업 인원 3명 기준으로 나누어 각 세션에 저장하도록 로직을 수정한 상태다.
+
+기본 구조:
+
+```text
+production_targets
+        ↓
+하루 전체 생산 목표
+        ↓
+3명 기준 분배
+        ↓
+production_sessions
+        ↓
+작업자별 세션 목표 저장
+```
+
+예:
+
+```text
+하루 초콜릿 목표 = 100세트
+
+1세션 = 34세트
+2세션 = 33세트
+3세션 = 33세트
+```
+
+사탕도 동일한 기준으로 계산한다.
+
+검증할 항목:
+
+- 오늘 첫 번째 세션 목표
+- 오늘 두 번째 세션 목표
+- 오늘 세 번째 세션 목표
+- 나머지 분배 결과
+- 하루 네 번째 세션 생성 차단
+- 목표값 최소 조건
+- DB 저장 결과
+- REST API 응답
+- `production/status` MQTT Payload
+
+---
+
+### 2. 관리자 웹용 하루 생산 현황 기준 재검토
+
+관리자 웹은 개별 작업자의 세션 현황이 아니라 하루 전체 생산 현황을 확인하도록 구성한다.
+
+기본 역할:
+
+```text
+production_targets
+→ 하루 전체 목표
+
+production_sessions
+→ 작업자별 생산 실적
+
+오늘 production_sessions 합계
+→ 하루 누적 생산량
+```
+
+현재 `production_sessions.started_at`을 기준으로 오늘 생성된 세션을 구분할 수 있다.
+
+예:
+
+```text
+오늘 초콜릿 생산량
+= 오늘 생성된 세션의 chocolate_count 합계
+
+오늘 사탕 생산량
+= 오늘 생성된 세션의 candy_count 합계
+```
+
+관리자 웹에서 최종적으로 필요한 정보:
+
+- 오늘 초콜릿 목표
+- 오늘 사탕 목표
+- 오늘 초콜릿 누적 생산량
+- 오늘 사탕 누적 생산량
+- 오늘 초콜릿 세트 수
+- 오늘 사탕 세트 수
+- 제품별 하루 진행률
+
+---
+
+### 3. 작업자 Qt / 관리자 웹 변경사항 전달
+
+서버 내부 수정이 끝난 뒤 실제 테스트에 들어가기 전에 각 담당자에게 변경된 생산 목표 기준을 전달한다.
+
+작업자 Qt:
+
+```text
+하루 전체 목표가 아닌
+현재 작업자 세션에 배정된 목표를 표시
+```
+
+관리자 웹:
+
+```text
+하루 전체 목표
++
+오늘 전체 세션 누적 생산량
+```
+
+전달할 내용:
+
+- REST API 필드
+- 세션 목표 계산 방식
+- 생산 목표 단위
+- MQTT `production/status` 의미
+- 관리자 웹에서 사용할 하루 누적 기준
+
+---
+
+### 4. Component 상태 이벤트 처리 확장
+
+현재 `smart_sorting/component/status/update` 수신 후 `system_components.current_status`를 갱신하는 기능까지 구현되어 있다.
 
 다음 단계에서는 함께 전달되는 `errorCode`, `message`를 실제 오류 처리에 사용한다.
 
@@ -1698,24 +2034,13 @@ Payload 기준:
 }
 ```
 
-검증 및 처리 대상:
-
-- `componentCode`
-- `status`
-- `errorCode`
-- `message`
-
-서버는 `message` 문자열을 분석하여 오류 종류를 추측하지 않고
-`errorCode`를 기준으로 이벤트 종류를 판단한다.
+서버는 `message` 문자열을 분석하여 오류 종류를 추측하지 않고 `errorCode`를 기준으로 이벤트 종류를 판단한다.
 
 ---
 
-### 2. Component 상태 기반 Alert 자동 생성
+### 5. Component 상태 기반 Alert 자동 생성
 
-제어부에서 이상 상태가 전달된 경우
-Component 상태 갱신과 함께 Alert를 생성하도록 처리한다.
-
-기본 흐름:
+제어부에서 이상 상태가 전달된 경우 Component 상태 갱신과 함께 Alert를 생성하도록 처리한다.
 
 ```text
 component/status/update 수신
@@ -1751,10 +2076,9 @@ OFFLINE
 
 ---
 
-### 3. Error Code 및 Priority 매핑 구현
+### 6. Error Code 및 Priority 매핑 구현
 
-`CONTROL_INTERFACE_SPEC.md`에서 정리한 Error Code를 기준으로
-Alert Type과 Priority를 서버에서 결정하도록 구현한다.
+`CONTROL_INTERFACE_SPEC.md`에서 정리한 Error Code를 기준으로 Alert Type과 Priority를 서버에서 결정하도록 구현한다.
 
 예:
 
@@ -1776,15 +2100,13 @@ SERIAL_DISCONNECTED
 → Priority HIGH
 ```
 
-제어부에서 Priority를 직접 전달하지 않고
-서버가 `status`, `errorCode` 기준으로 결정하는 구조를 사용한다.
+제어부에서 Priority를 직접 전달하지 않고 서버가 `status`, `errorCode` 기준으로 결정하는 구조를 사용한다.
 
 ---
 
-### 4. Component 정상 복구 처리
+### 7. Component 정상 복구 처리
 
-제어부에서 `NORMAL` 상태가 전달되면
-현재 Component 상태를 정상으로 갱신한다.
+제어부에서 `NORMAL` 상태가 전달되면 현재 Component 상태를 정상으로 갱신한다.
 
 ```text
 component/status/update
@@ -1794,8 +2116,7 @@ status = NORMAL
 system_components.current_status = NORMAL
 ```
 
-추가로 해당 Component의 기존 미복구 Alert를
-어떤 기준으로 복구 처리할지 구현한다.
+추가로 해당 Component의 기존 미복구 Alert를 어떤 기준으로 복구 처리할지 구현한다.
 
 정상 상태에서는:
 
@@ -1808,7 +2129,7 @@ priority = null
 
 ---
 
-### 5. 장비 상태 처리 결과 MQTT Publish
+### 8. 장비 상태 처리 결과 MQTT Publish
 
 제어부 상태 메시지 처리 후 실제 Component 상태가 변경된 경우:
 
@@ -1838,7 +2159,7 @@ smart_sorting/component/status/update
 
 ---
 
-### 6. MQTT Explorer 전체 시나리오 테스트
+### 9. MQTT Explorer 전체 시나리오 테스트
 
 다음 상태를 순서대로 테스트한다.
 
@@ -1853,9 +2174,13 @@ OFFLINE
 
 ```text
 CAMERA / WARNING / NO_DETECTION
+
 CAMERA / ERROR / CAMERA_ERROR
+
 SORTING_SERVO / ERROR / SERVO_ACK_TIMEOUT
+
 ARDUINO / OFFLINE / SERIAL_DISCONNECTED
+
 BUZZER / ERROR / BUZZER_ERROR
 ```
 
@@ -1872,10 +2197,9 @@ BUZZER / ERROR / BUZZER_ERROR
 
 ---
 
-### 7. MQTT 연결 안정성 보강
+### 10. MQTT 연결 안정성 보강
 
-실제 Raspberry Pi 및 클라이언트 연동 전에
-MQTT 연결 끊김 상황에 대한 처리를 보강한다.
+실제 Raspberry Pi 및 클라이언트 연동 전에 MQTT 연결 끊김 상황에 대한 처리를 보강한다.
 
 확인 항목:
 
@@ -1885,16 +2209,16 @@ MQTT 연결 끊김 상황에 대한 처리를 보강한다.
 - Publisher 연결 실패 처리
 - Publish 실패 및 재시도 처리
 
-MQTT Broker 자체 상태 및 서버 공통 인프라 오류 처리는
-제어부용 `CONTROL_INTERFACE_SPEC.md`와 분리하여 서버 기준으로 별도 정리한다.
+MQTT Broker 자체 상태 및 서버 공통 인프라 오류 처리는 제어부용 `CONTROL_INTERFACE_SPEC.md`와 분리하여 서버 기준으로 별도 정리한다.
 
 ---
 
-### 8. 실제 클라이언트 연동
+### 11. 실제 클라이언트 연동
 
-서버의 Component 상태 및 Alert 처리 기능 완료 후 각 담당 클라이언트와 연결한다.
+서버 기능 정리 및 개별 테스트 완료 후 각 담당 클라이언트와 연결한다.
 
 - 관리자 웹 생산 목표 API 연동
+- 관리자 웹 하루 누적 생산 현황 연동
 - 관리자 웹 장비 상태 MQTT 연동
 - 관리자 웹 Alert MQTT 연동
 - 작업자 Qt REST API 연동
@@ -1903,7 +2227,7 @@ MQTT Broker 자체 상태 및 서버 공통 인프라 오류 처리는
 
 ---
 
-### 9. 전체 시스템 통합 테스트
+### 12. 전체 시스템 통합 테스트
 
 다음 구성요소를 모두 연결한다.
 
@@ -1916,17 +2240,21 @@ ASP.NET Core Server
    ↓             ↓
 MySQL        MQTT Publish
                   ↓
-        ┌────┴────┐
-        ↓                  ↓
-   관리자 Web           작업자 Qt
+          ┌───────┴───────┐
+          ↓               ↓
+     관리자 Web        작업자 Qt
 ```
 
 최종적으로 다음 흐름을 전체 테스트한다.
 
+- 하루 생산 목표 설정
+- 작업자별 세션 목표 분배
 - 제품 감지 및 분류 결과 저장
-- 생산량 갱신
+- 세션별 생산량 갱신
+- 하루 누적 생산량 계산
 - Component 상태 변경
 - Error Code 기반 Alert 생성
 - Alert 확인 및 복구
 - 관리자 화면 실시간 상태 반영
+- 작업자 화면 생산 목표 표시
 - 작업자 화면 및 라인 제어

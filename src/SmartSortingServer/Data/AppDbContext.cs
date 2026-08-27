@@ -157,9 +157,9 @@ namespace SmartSortingServer.Data {
                     .HasColumnName("target_chocolate_set_count")
                     .IsRequired();
 
-                // 사탕 목표 수량
-                entity.Property(e => e.TargetCandyCount)
-                    .HasColumnName("target_candy_count")
+                // 사탕 목표 세트 수
+                entity.Property(e => e.TargetCandySetCount)
+                    .HasColumnName("target_candy_set_count")
                     .IsRequired();
 
                 // 마지막 수정 일시
@@ -184,8 +184,8 @@ namespace SmartSortingServer.Data {
                     .HasColumnName("target_chocolate_set_count")
                     .IsRequired();
 
-                entity.Property(e => e.TargetCandyCount)
-                    .HasColumnName("target_candy_count")
+                entity.Property(e => e.TargetCandySetCount)
+                    .HasColumnName("target_candy_set_count")
                     .IsRequired();
 
                 entity.Property(e => e.ChocolateCount)

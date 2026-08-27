@@ -224,8 +224,7 @@ Component 상태 및 오류 전달
 {
   "componentCode": "CAMERA",
   "status": "ERROR",
-  "errorCode": "CAMERA_ERROR",
-  "message": "카메라 촬영에 실패했습니다."
+  "errorCode": "CAMERA_ERROR"
 }
 ```
 
@@ -241,6 +240,3 @@ Component 상태 및 오류 전달
 - `errorCode`
     - **Component 상태 및 오류**에 정의된 Error Code 중 하나
     - 정상 상태는 `null`
-
-- `message`
-    - **Component 상태 및 오류**에 정의된 메시지

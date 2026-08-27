@@ -93,7 +93,7 @@ CREATE TABLE system_components (
 CREATE TABLE production_targets (
     target_id INT PRIMARY KEY,
     target_chocolate_set_count INT NOT NULL,
-    target_candy_count INT NOT NULL,
+    target_candy_set_count INT NOT NULL,
     updated_at DATETIME NOT NULL
         DEFAULT CURRENT_TIMESTAMP
         ON UPDATE CURRENT_TIMESTAMP,
@@ -102,7 +102,7 @@ CREATE TABLE production_targets (
         CHECK (target_chocolate_set_count > 0),
 
     CONSTRAINT chk_production_targets_candy
-        CHECK (target_candy_count > 0)
+        CHECK (target_candy_set_count > 0)
 );
 
 
@@ -115,7 +115,7 @@ CREATE TABLE production_sessions (
     user_id BIGINT NOT NULL,
 
     target_chocolate_set_count INT NOT NULL,
-    target_candy_count INT NOT NULL,
+    target_candy_set_count INT NOT NULL,
 
     chocolate_count INT NOT NULL DEFAULT 0,
     candy_count INT NOT NULL DEFAULT 0,
@@ -136,12 +136,12 @@ CREATE TABLE production_sessions (
         CHECK (target_chocolate_set_count >= 0),
 
     CONSTRAINT chk_production_sessions_target_candy
-        CHECK (target_candy_count >= 0),
+        CHECK (target_candy_set_count >= 0),
 
     CONSTRAINT chk_production_sessions_target
         CHECK (
             target_chocolate_set_count > 0
-            OR target_candy_count > 0
+            OR target_candy_set_count > 0
         ),
 
     CONSTRAINT chk_production_sessions_chocolate_count
@@ -406,7 +406,7 @@ INSERT INTO system_components (
 INSERT INTO production_targets (
     target_id,
     target_chocolate_set_count,
-    target_candy_count
+    target_candy_set_count
 ) VALUES (
     1,
     10,
@@ -445,7 +445,7 @@ INSERT INTO users (
 INSERT INTO production_sessions (
     user_id,
     target_chocolate_set_count,
-    target_candy_count,
+    target_candy_set_count,
     chocolate_count,
     candy_count,
     status,
@@ -604,7 +604,7 @@ ORDER BY component_id;
 SELECT
     target_id,
     target_chocolate_set_count,
-    target_candy_count,
+    target_candy_set_count,
     updated_at
 FROM production_targets;
 

@@ -34,7 +34,7 @@ namespace SmartSortingServer.Controllers {
 
             return Ok(new {
                 targetChocolateSetCount = target.TargetChocolateSetCount,
-                targetCandyCount = target.TargetCandyCount,
+                targetCandySetCount = target.TargetCandySetCount,
                 updatedAt = target.UpdatedAt
             });
         }
@@ -44,7 +44,7 @@ namespace SmartSortingServer.Controllers {
         public async Task<IActionResult> UpdateCurrentTarget(
             [FromBody] UpdateProductionTargetRequest request
         ) {
-            if (request.TargetChocolateSetCount <= 0 || request.TargetCandyCount <= 0) {
+            if (request.TargetChocolateSetCount <= 0 || request.TargetCandySetCount <= 0) {
                 return BadRequest(new {
                     message = "목표 생산량은 1 이상이어야 합니다."
                 });
@@ -60,22 +60,22 @@ namespace SmartSortingServer.Controllers {
             }
 
             target.TargetChocolateSetCount = request.TargetChocolateSetCount;
-            target.TargetCandyCount = request.TargetCandyCount;
+            target.TargetCandySetCount = request.TargetCandySetCount;
             target.UpdatedAt = DateTime.Now;
 
             await _context.SaveChangesAsync();
 
             // 생산 목표 변경 로그
             _logger.LogInformation(
-                "[TARGET] 생산 목표 변경 - ChocolateSet: {ChocolateSet}, Candy: {Candy}",
+                "[TARGET] 생산 목표 변경 - ChocolateSet: {ChocolateSet}, CandySet: {CandySet}",
                 target.TargetChocolateSetCount,
-                target.TargetCandyCount
+                target.TargetCandySetCount
             );
 
             return Ok(new {
                 message = "생산 목표가 설정되었습니다.",
                 targetChocolateSetCount = target.TargetChocolateSetCount,
-                targetCandyCount = target.TargetCandyCount,
+                targetCandySetCount = target.TargetCandySetCount,
                 updatedAt = target.UpdatedAt
             });
         }
@@ -83,6 +83,6 @@ namespace SmartSortingServer.Controllers {
 
     public class UpdateProductionTargetRequest {
         public int TargetChocolateSetCount { get; set; }
-        public int TargetCandyCount { get; set; }
+        public int TargetCandySetCount { get; set; }
     }
 }

@@ -231,6 +231,11 @@ namespace SmartSortingServer.Services {
                     productionSession.TargetChocolateSetCount
                     * chocolateType.UnitPerSet;
 
+                // 사탕 목표 개수
+                int candyTargetCount =
+                    productionSession.TargetCandySetCount
+                    * candyType.UnitPerSet;
+
                 // 초콜릿 현재 세트 수
                 int chocolateSetCount =
                     chocolateType.UnitPerSet > 0
@@ -257,10 +262,10 @@ namespace SmartSortingServer.Services {
 
                 // 사탕 진행률
                 int candyProgress =
-                    productionSession.TargetCandyCount > 0
+                    candyTargetCount > 0
                         ? (int)Math.Round(
                             (double)productionSession.CandyCount
-                            / productionSession.TargetCandyCount
+                            / candyTargetCount
                             * 100
                         )
                         : 0;
@@ -297,7 +302,7 @@ namespace SmartSortingServer.Services {
                                 productionSession.CandyCount,
 
                             targetCount =
-                                productionSession.TargetCandyCount,
+                                candyTargetCount,
 
                             unitPerSet =
                                 candyType.UnitPerSet,
