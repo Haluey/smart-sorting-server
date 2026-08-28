@@ -15,6 +15,8 @@
 
         public int DailyWorkerCount { get; set; }
 
+        public int? NextDailyWorkerCount { get; set; }
+
         // 마지막 수정 일시
         public DateTime UpdatedAt { get; set; }
     }

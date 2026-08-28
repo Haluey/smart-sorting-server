@@ -101,8 +101,11 @@ CREATE TABLE production_targets (
     next_target_chocolate_set_count INT NULL,
     next_target_candy_set_count INT NULL,
 
-    -- 하루 작업 인원 수
+    -- 현재 적용 중인 하루 작업 인원 수
     daily_worker_count INT NOT NULL DEFAULT 3,
+
+    -- 다음 날 적용할 예약 작업 인원 수
+    next_daily_worker_count INT NULL,
 
     updated_at DATETIME NOT NULL
         DEFAULT CURRENT_TIMESTAMP
@@ -127,7 +130,13 @@ CREATE TABLE production_targets (
         ),
 
     CONSTRAINT chk_production_targets_daily_worker_count
-        CHECK (daily_worker_count > 0)
+        CHECK (daily_worker_count > 0),
+
+    CONSTRAINT chk_production_targets_next_daily_worker_count
+        CHECK (
+            next_daily_worker_count IS NULL
+            OR next_daily_worker_count > 0
+        )
 );
 
 
@@ -434,14 +443,16 @@ INSERT INTO production_targets (
     target_candy_set_count,
     next_target_chocolate_set_count,
     next_target_candy_set_count,
-    daily_worker_count
+    daily_worker_count,
+    next_daily_worker_count
 ) VALUES (
     1,
     10,
     100,
     NULL,
     NULL,
-    3
+    3,
+    NULL
 );
 
 
@@ -636,6 +647,10 @@ SELECT
     target_id,
     target_chocolate_set_count,
     target_candy_set_count,
+    next_target_chocolate_set_count,
+    next_target_candy_set_count,
+    daily_worker_count,
+    next_daily_worker_count,
     updated_at
 FROM production_targets;
 

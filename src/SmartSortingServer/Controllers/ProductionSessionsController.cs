@@ -78,30 +78,55 @@ namespace SmartSortingServer.Controllers {
 
             /*
              * 오늘 첫 생산 작업을 시작하는 경우
-             * 예약된 다음 목표가 있으면 현재 목표로 적용
+             * 예약된 생산 목표와 작업 인원을 현재 설정으로 적용
              */
-            if (todaySessionCount == 0 &&
-                target.NextTargetChocolateSetCount.HasValue &&
-                target.NextTargetCandySetCount.HasValue) {
+            if (todaySessionCount == 0) {
 
-                target.TargetChocolateSetCount =
-                    target.NextTargetChocolateSetCount.Value;
+                bool targetChanged = false;
 
-                target.TargetCandySetCount =
-                    target.NextTargetCandySetCount.Value;
+                // 예약 생산 목표 적용
+                if (target.NextTargetChocolateSetCount.HasValue &&
+                    target.NextTargetCandySetCount.HasValue) {
 
-                target.NextTargetChocolateSetCount = null;
-                target.NextTargetCandySetCount = null;
+                    target.TargetChocolateSetCount =
+                        target.NextTargetChocolateSetCount.Value;
 
-                target.UpdatedAt = DateTime.Now;
+                    target.TargetCandySetCount =
+                        target.NextTargetCandySetCount.Value;
 
-                await _context.SaveChangesAsync();
+                    target.NextTargetChocolateSetCount = null;
+                    target.NextTargetCandySetCount = null;
 
-                _logger.LogInformation(
-                    "[TARGET] 예약 생산 목표 적용 - ChocolateSet: {ChocolateSet}, CandySet: {CandySet}",
-                    target.TargetChocolateSetCount,
-                    target.TargetCandySetCount
-                );
+                    targetChanged = true;
+
+                    _logger.LogInformation(
+                        "[TARGET] 예약 생산 목표 적용 - ChocolateSet: {ChocolateSet}, CandySet: {CandySet}",
+                        target.TargetChocolateSetCount,
+                        target.TargetCandySetCount
+                    );
+                }
+
+                // 예약 작업 인원 적용
+                if (target.NextDailyWorkerCount.HasValue) {
+
+                    target.DailyWorkerCount =
+                        target.NextDailyWorkerCount.Value;
+
+                    target.NextDailyWorkerCount = null;
+
+                    targetChanged = true;
+
+                    _logger.LogInformation(
+                        "[TARGET] 예약 작업 인원 적용 - DailyWorkerCount: {DailyWorkerCount}",
+                        target.DailyWorkerCount
+                    );
+                }
+
+                if (targetChanged) {
+                    target.UpdatedAt = DateTime.Now;
+
+                    await _context.SaveChangesAsync();
+                }
             }
 
             // 생산 목표 유효성 확인

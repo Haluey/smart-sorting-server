@@ -206,55 +206,71 @@ namespace SmartSortingServer.Controllers {
             return Ok(result);
         }
 
-        // 오늘 제품 분류 비율
+        // 오늘 제품 종류별 분류 비율
         [HttpGet("classification-ratio")]
         public async Task<IActionResult> GetClassificationRatio() {
 
             DateTime today = DateTime.Today;
             DateTime tomorrow = today.AddDays(1);
 
+            // 오늘 정상 분류된 제품만 조회
             var detections = await _context.ProductDetections
                 .Where(p =>
                     p.DetectedAt >= today
                     && p.DetectedAt < tomorrow
+                    && p.ClassificationStatus == "SUCCESS"
+                    && p.ProductTypeId != null
                 )
                 .ToListAsync();
 
-            int successCount =
-                detections.Count(
-                    p => p.ClassificationStatus == "SUCCESS"
+            // 제품 유형 조회
+            var productTypes = await _context.ProductTypes
+                .ToDictionaryAsync(
+                    p => p.ProductTypeId,
+                    p => p.ProductTypeCode
                 );
 
-            int failedCount =
-                detections.Count(
-                    p => p.ClassificationStatus == "FAILED"
+            // 초콜릿 분류 수
+            int chocolateCount =
+                detections.Count(p =>
+                    p.ProductTypeId != null
+                    && productTypes.ContainsKey(p.ProductTypeId.Value)
+                    && productTypes[p.ProductTypeId.Value] == "CHOCOLATE"
+                );
+
+            // 사탕 분류 수
+            int candyCount =
+                detections.Count(p =>
+                    p.ProductTypeId != null
+                    && productTypes.ContainsKey(p.ProductTypeId.Value)
+                    && productTypes[p.ProductTypeId.Value] == "CANDY"
                 );
 
             int totalCount =
-                successCount + failedCount;
+                chocolateCount + candyCount;
 
-            double successRate =
+            double chocolateRate =
                 totalCount > 0
                     ? Math.Round(
-                        (double)successCount / totalCount * 100,
+                        (double)chocolateCount / totalCount * 100,
                         1
                     )
                     : 0;
 
-            double failedRate =
+            double candyRate =
                 totalCount > 0
                     ? Math.Round(
-                        (double)failedCount / totalCount * 100,
+                        (double)candyCount / totalCount * 100,
                         1
                     )
                     : 0;
 
             return Ok(new {
                 totalCount,
-                successCount,
-                failedCount,
-                successRate,
-                failedRate
+                chocolateCount,
+                candyCount,
+                chocolateRate,
+                candyRate
             });
         }
 
@@ -262,16 +278,9 @@ namespace SmartSortingServer.Controllers {
         [HttpGet("recent-detections")]
         public async Task<IActionResult> GetRecentDetections() {
 
-            DateTime today = DateTime.Today;
-            DateTime tomorrow = today.AddDays(1);
-
             var detections = await _context.ProductDetections
-                .Where(p =>
-                    p.DetectedAt >= today
-                    && p.DetectedAt < tomorrow
-                )
                 .OrderByDescending(p => p.DetectedAt)
-                .Take(10)
+                .Take(5)
                 .Select(p => new {
                     productDetectionId =
                         p.ProductDetectionId,

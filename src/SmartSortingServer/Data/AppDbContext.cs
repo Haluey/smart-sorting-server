@@ -172,6 +172,9 @@ namespace SmartSortingServer.Data {
                     .HasColumnName("daily_worker_count")
                     .IsRequired();
 
+                entity.Property(e => e.NextDailyWorkerCount)
+                    .HasColumnName("next_daily_worker_count");
+
                 // 마지막 수정 일시
                 entity.Property(e => e.UpdatedAt)
                     .HasColumnName("updated_at");
