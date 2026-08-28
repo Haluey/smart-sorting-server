@@ -1948,6 +1948,149 @@ next_daily_worker_count
 
 ---
 
+## 2026-08-28 - MQTT 실시간 연동 및 알림 처리 구조 개선
+
+### 제품 감지 결과 실시간 MQTT 연동
+
+- 관리자 Web의 최근 제품 분류 내역을 실시간으로 갱신할 수 있도록 신규 MQTT Topic을 추가했습니다.
+  - `smart_sorting/product/detection`
+- 제품 감지 결과가 DB에 저장된 직후 신규 감지 정보를 MQTT로 Publish하도록 `ProductDetectionService`를 수정했습니다.
+- 분류 성공 여부와 관계없이 모든 감지 결과를 전달하도록 구성했습니다.
+  - `SUCCESS`
+    - 제품 유형
+    - 신뢰도
+    - 이미지 경로
+    - 감지 시간
+  - `FAILED`
+    - 제품 유형 `null`
+    - 신뢰도 `null`
+    - 이미지 경로
+    - 감지 시간
+- 기존 `smart_sorting/production/status`와 역할을 분리했습니다.
+  - `production/status`: 생산 수량, 세트 수, 진행률
+  - `product/detection`: 최근 제품 감지 결과
+- MQTT Explorer를 이용하여 `CHOCOLATE`, `CANDY`, `FAILED` 감지 결과가 정상 Publish되는 것을 확인했습니다.
+
+### 알림 MQTT Payload 구조 개선
+
+- Qt 작업자 화면과 관리자 Web에서 서로 다른 길이의 알림 메시지를 사용할 수 있도록 알림 메시지를 분리했습니다.
+  - `shortMessage`: Qt 작업자 화면용 짧은 메시지
+  - `alertMessage`: 관리자 Web 및 DB용 상세 메시지
+- 자동 장비 알림 MQTT Payload를 다음 구조로 통일했습니다.
+  - `alertId`
+  - `alertType`
+  - `priority`
+  - `componentCode`
+  - `errorCode`
+  - `shortMessage`
+  - `alertMessage`
+  - `createdAt`
+- 관리자 수동 알림에도 동일한 Payload 구조를 적용했습니다.
+- 수동 알림 생성 요청 시 `shortMessage`를 필수 입력으로 추가하고 50자 이하로 제한했습니다.
+- INFO 알림에도 동일한 메시지 구조를 적용했습니다.
+
+### Alert 오류 코드 구조 추가
+
+- 장비에서 발생한 오류의 종류를 구분할 수 있도록 `alerts` 테이블에 `error_code` 컬럼을 추가했습니다.
+- `Alert` Entity와 `AppDbContext`에 `ErrorCode` 매핑을 추가했습니다.
+- 알림 조회 API에서도 `errorCode`를 반환하도록 수정했습니다.
+- 자동 장비 오류는 `errorCode`를 저장하고, 수동 알림과 INFO 알림은 `NULL`로 처리하도록 역할을 구분했습니다.
+
+### 장비 오류 알림 처리 구조 분리
+
+- 장비 상태 이벤트와 알림 생성 로직을 분리하기 위해 `ComponentAlertService`를 추가했습니다.
+- Error Code에 따라 대상 구성요소, 장비 상태, 짧은 메시지, 상세 메시지, 중요도를 서버에서 결정하도록 구성했습니다.
+- 주요 오류 코드를 정리했습니다.
+  - `NO_DETECTION`
+  - `CAMERA_ERROR`
+  - `YOLO_ERROR`
+  - `MODEL_LOAD_ERROR`
+  - `IMAGE_SAVE_ERROR`
+  - `SERVO_ACK_TIMEOUT`
+  - `SERVO_ACK_ERROR`
+  - `STEPPER_ERROR`
+  - `IR_ERROR`
+  - `BUZZER_ERROR`
+  - `SERIAL_DISCONNECTED`
+  - `SERIAL_ERROR`
+  - `SERIAL_TIMEOUT`
+  - `ARDUINO_ERROR`
+  - `UNKNOWN_COMMAND`
+- 동일 구성요소에서 동일한 Error Code가 복구되지 않은 상태로 존재하면 중복 Alert를 생성하지 않도록 처리했습니다.
+- 장비가 `NORMAL` 상태로 복구되면 해당 구성요소의 자동 알림을 `RECOVERED` 상태로 변경하도록 구성했습니다.
+- 수동으로 생성한 알림은 자동 복구 대상에서 제외했습니다.
+
+### 장비 상태와 알림 Topic 역할 분리
+
+- 신규 오류 발생과 현재 장비 상태의 역할을 다음과 같이 분리했습니다.
+  - `smart_sorting/alert`: 신규 INFO / WARNING / ERROR 알림 전달
+  - `smart_sorting/component/status`: 장비 현재 상태 전달
+- 장비 상태를 `NORMAL`, `WARNING`, `ERROR`, `OFFLINE`으로 통일했습니다.
+- 오류 복구 시 별도의 복구 Alert를 생성하지 않고 `component/status`의 `NORMAL` 메시지로 정상 복귀를 전달하도록 결정했습니다.
+- 관리자 Web의 과거 알림 및 복구 이력은 REST API와 DB에서 조회하도록 역할을 분리했습니다.
+
+### 초콜릿 세트 완료 INFO 알림 개선
+
+- 기존에는 현재 생산 세션의 `ChocolateCount`를 기준으로 초콜릿 세트 완료 여부를 판단했습니다.
+- 작업자 교대 시 새로운 생산 세션의 생산량이 0부터 시작하기 때문에 이전 작업자가 생산한 미완성 세트가 다음 작업자에게 이어지지 않는 문제가 있었습니다.
+- 작업자별 생산 실적과 실제 공정의 세트 완료 기준을 분리했습니다.
+  - `production_sessions.chocolate_count`: 현재 작업자 개인 생산 실적
+  - Qt 생산 현황: 현재 작업자 세션 기준
+  - 초콜릿 세트 완료 INFO: 당일 전체 생산 세션의 초콜릿 누적 생산량 기준
+- 당일 전체 `ChocolateCount`를 합산한 뒤 이번 감지 수량을 포함하여 세트 완료 여부를 계산하도록 수정했습니다.
+- 작업자가 세트 단위 생산을 완료하지 못해도 작업을 종료할 수 있도록 기존 작업 종료 방식을 유지했습니다.
+
+### 작업자 교대 및 일일 누적 INFO 테스트
+
+- 기존 당일 생산 기록을 유지한 상태에서 작업자 교대 상황을 테스트했습니다.
+- 테스트 시작 당시 당일 초콜릿 누적 생산량은 111개였습니다.
+- 기존 생산 세션에서 초콜릿 6개를 추가 생산하여 누적 117개까지 증가시켰습니다.
+- 기존 세션을 종료한 뒤 새로운 생산 세션을 생성했습니다.
+- 새로운 세션의 `chocolate_count`가 0부터 시작하는 것을 확인했습니다.
+- 신규 세션에서 초콜릿 3개를 추가 생산하여 당일 누적 생산량을 120개로 만들었습니다.
+- 118개와 119개에서는 INFO 알림이 발생하지 않았고, 120개가 되는 순간 다음 알림이 발생하는 것을 확인했습니다.
+
+```text
+shortMessage = 초콜릿 12세트 완료
+alertMessage = 초콜릿 12세트 생산이 완료되었습니다.
+```
+
+- 신규 세션의 DB 생산 실적은 3개로 별도 저장되는 것을 확인했습니다.
+- 최종적으로 다음 구조가 정상 동작하는 것을 확인했습니다.
+
+```text
+작업자 개인 생산 실적
+→ production_sessions 단위로 별도 저장
+
+Qt 생산 현황
+→ 현재 작업자 세션 기준
+
+초콜릿 세트 완료 INFO
+→ 당일 전체 작업자 누적 생산량 기준
+```
+
+### MQTT 연동 문서 정리
+
+- Qt 작업자 화면 알림 MQTT 연동 기준을 정리했습니다.
+  - `smart_sorting/alert`
+  - `smart_sorting/component/status`
+  - `shortMessage` 사용
+  - 장비 `NORMAL` 복구 처리
+
+- 관리자 Web의 최근 제품 분류 실시간 표시를 위한 MQTT 연동 기준을 정리했습니다.
+  - `smart_sorting/product/detection`
+  - REST + MQTT 병행
+  - SUCCESS / FAILED 실시간 반영
+
+- 관리자 Web의 알림 MQTT 변경사항도 별도로 정리했습니다.
+  - `alertMessage` 중심 표시
+  - `errorCode`
+  - `component/status`
+  - INFO 알림
+  - 수동 알림 생성 시 `shortMessage`, `alertMessage` 전달
+
+---
+
 ## 현재 완료 상태
 
 - [x] 데이터베이스 생성 스크립트
@@ -2010,7 +2153,7 @@ next_daily_worker_count
 - [x] 예약 생산 목표와 예약 작업 인원 상호 검증
 - [x] 예약 생산 목표·작업 인원 서버 재시작 후 유지 확인
 - [x] 다음 날 예약 생산 목표·작업 인원 적용 시뮬레이션 테스트
-- [x] 예약값 적용 후 `next_*` 필드 `NULL` 초기화 확인
+- [x] 예약값 적용 후 `next_\*` 필드 `NULL` 초기화 확인
 - [x] 생산 목표 API와 작업 인원 API 역할 분리
 - [x] 관리자 웹용 생산 목표·작업 인원 연동 기준 문서화
 
@@ -2059,6 +2202,13 @@ next_daily_worker_count
 - [x] 제품 감지 후 `currentCount`, `setCount`, `progress` MQTT 갱신 확인
 - [x] 사탕 `unit_per_set = 5` 임시 변경을 통한 계산 로직 검증
 - [x] 테스트 후 사탕 `unit_per_set = 1` 복원
+- [x] 서버 → 관리자 Web 신규 제품 감지 Topic `smart_sorting/product/detection` Publish 구현
+- [x] `SUCCESS / FAILED` 감지 결과 모두 `product/detection`으로 실시간 전달
+- [x] `CHOCOLATE / CANDY / FAILED` 실시간 제품 감지 Publish 테스트
+- [x] 초콜릿 세트 완료 INFO 판단을 현재 세션 기준에서 당일 전체 누적 기준으로 변경
+- [x] 작업자 교대 후 새 세션이 0부터 시작해도 이전 생산량과 합산하여 세트 완료 INFO가 이어지도록 처리
+- [x] 당일 누적 120개 도달 시 `초콜릿 12세트 완료` INFO Publish 테스트
+- [x] 작업자별 `production_sessions.chocolate_count` 실적은 세션별로 유지되는 구조 확인
 
 ### 시스템 구성요소
 
@@ -2094,6 +2244,17 @@ next_daily_worker_count
 - [x] 알림 생성 → 구성요소 `NORMAL -> ERROR` 테스트
 - [x] 알림 복구 → 구성요소 `ERROR -> NORMAL` 테스트
 - [x] 제품 분류 `FAILED`와 자동 장비 오류·알림 생성을 분리하도록 구조 수정
+- [x] `alerts.error_code` 컬럼 추가 및 `Alert.ErrorCode` Entity 매핑
+- [x] 알림 조회 API에 `errorCode` 응답 추가
+- [x] `ComponentAlertService` 분리 및 Error Code 기반 Alert 정보 매핑 구현
+- [x] 동일 Component + 동일 `errorCode`의 미복구 Alert 중복 생성 방지
+- [x] Component `NORMAL` 복구 시 자동 생성 Alert `RECOVERED` 처리
+- [x] 수동 Alert는 자동 복구 대상에서 제외하도록 구분
+- [x] 알림 MQTT Payload에 `errorCode`, `shortMessage`, `alertMessage` 적용
+- [x] Qt용 `shortMessage`와 Web/DB용 `alertMessage` 역할 분리
+- [x] 수동 알림 생성 시 `shortMessage` 필수 및 50자 이하 검증 추가
+- [x] INFO 알림 MQTT에도 공통 알림 Payload 구조 적용
+- [x] `CAMERA_ERROR`, `NO_DETECTION`, `SERIAL_DISCONNECTED`, `NORMAL` 복구 시나리오 테스트
 
 ### MQTT
 
@@ -2121,6 +2282,12 @@ next_daily_worker_count
 - [x] Component 상태 MQTT 메시지 DB 반영 테스트
 - [x] 생산 현황 MQTT의 `targetCount`를 세트 목표 × `unit_per_set` 기준으로 통일
 - [x] 생산 현황 MQTT의 `setCount`, `progress` 계산 기준 통일
+- [x] `smart_sorting/product/detection` Publish 구현
+- [x] 제품 감지 DB 저장 직후 Web용 실시간 감지 결과 Publish
+- [x] `smart_sorting/alert` Payload를 자동/수동/INFO 알림 공통 구조로 통일
+- [x] Component 이상 상태 수신 → DB 갱신 → Alert 생성 → `component/status` / `alert` Publish 연동
+- [x] Component `NORMAL` 복구 → 자동 Alert 복구 → `component/status = NORMAL` Publish 연동
+- [x] MQTT Explorer를 이용한 장비 상태·알림 주요 시나리오 테스트
 
 ### 관리자 대시보드
 
@@ -2140,6 +2307,11 @@ next_daily_worker_count
 - [x] 작업자·관리자 공통 MQTT Payload 구조 정리
 - [x] 관리자 웹 생산 목표·작업 인원 현재값/예약값 표시 기준 정리
 - [x] 관리자 웹 생산 목표·작업 인원 REST API 연동 문서 작성
+- [x] Qt 작업자 화면 Alert MQTT 변경사항 연동 문서 작성
+- [x] 관리자 Web 최근 제품 감지 실시간 MQTT 연동 문서 작성
+- [x] 관리자 Web Alert MQTT 변경사항 연동 문서 작성
+- [x] Qt는 `shortMessage`, 관리자 Web은 `alertMessage` 중심으로 사용하는 기준 확정
+- [x] REST는 초기/이력 조회, MQTT는 신규 실시간 이벤트 처리로 역할 분리
 
 ### NLog / 서버 로그
 
@@ -2166,12 +2338,12 @@ next_daily_worker_count
 - [x] `smart_sorting/component/status/update` Topic 사용 결정
 - [x] 실제 장비 상태와 `system_components` 연동 기준 정리
 - [x] 제품 분류 결과와 장비 상태 메시지 역할 분리
-- [x] `componentCode`, `status`, `errorCode`, `message` Payload 구조 확정
+- [x] `componentCode`, `status`, `errorCode` Payload 구조 확정
 - [x] 허용 상태값 `NORMAL`, `WARNING`, `ERROR`, `OFFLINE` 정리
 - [x] `NO_DETECTION`을 `CAMERA / WARNING`으로 처리하는 기준 정리
 - [x] Hardware / Software Error Code 정리
 - [x] Alert Priority `LOW / MEDIUM / HIGH` 기준 정리
-- [x] 정상 상태에서 `errorCode = null`, `priority = null` 기준 정리
+- [x] 정상 상태에서 `errorCode = null` 기준 정리
 - [x] 제품 분류 결과와 Component 상태가 동시에 발생하는 상황 처리 기준 정리
 - [x] 제품 분류와 직접 관계없는 Component 오류 처리 기준 분리
 - [x] `CONTROL_INTERFACE_SPEC.md` 작성
@@ -2184,50 +2356,46 @@ next_daily_worker_count
 
 ### 생산 목표 / 생산 작업
 
-- [ ] 세션별 목표 변경 후 Qt에서 목표값이 정상 표시되는지 확인
-- [ ] 관리자 웹에서 사용할 하루 누적 생산량 계산 기준 최종 확인
-- [ ] 관리자 웹의 하루 목표 / 하루 누적 / 진행률 표시 구조 최종 연동
-- [ ] 현재 관리자 대시보드 오늘 생산량 요약 API가 변경된 목표·작업 인원 구조와 일치하는지 최종 재검토
-- [ ] 관리자 웹에서 생산 목표·작업 인원 설정 API 실제 화면 연동 확인
-- [ ] 작업 인원 변경 및 예약 상태가 관리자 화면에 정상 표시되는지 확인
+- [ ] 세션별 목표값이 작업자 Qt 화면에 정상 표시되는지 실제 연동 확인
+- [ ] 관리자 웹의 하루 목표 / 하루 누적 생산량 / 진행률 실제 화면 연동 확인
+- [ ] 관리자 대시보드 오늘 생산량 요약 API가 작업자 교대 및 현재 목표 구조와 일치하는지 최종 확인
+- [ ] 관리자 웹 생산 목표·작업 인원 설정 API 실제 화면 연동 확인
+- [ ] 작업 인원 변경 및 다음 날 예약 상태가 관리자 화면에 정상 표시되는지 확인
 
-### Component 상태 / Alert
+### 관리자 Web 상세 기능
 
-- [ ] `component/status/update` 수신 시 `errorCode`, `message` 검증 및 실제 처리
-- [ ] Component 상태 이벤트 기반 Alert 자동 생성 구현
-- [ ] `NO_DETECTION` 수신 시 `CAMERA = WARNING` + `WARNING` Alert 생성 구현
-- [ ] Component `ERROR / WARNING / OFFLINE` 상태별 Alert Type 및 Priority 자동 결정 구현
-- [ ] 동일 상태에서 새로운 `errorCode`가 전달되는 경우의 중복 Alert 처리 기준 구현
-- [ ] Component `NORMAL` 복구 시 기존 미복구 Alert 처리 방식 구현
-- [ ] 실제 장비 상태 처리 후 `smart_sorting/component/status` MQTT Publish 연동
-- [ ] 실제 장비 Alert 생성 후 `smart_sorting/alert` MQTT Publish 연동
-- [ ] Component 상태 MQTT 전체 시나리오 테스트
-
-### 관리자 대시보드 / 제품 감지
-
-- [ ] 최근 제품 감지 이미지의 실제 이미지 경로 제공 방식 검토
-- [ ] 제품 감지 상세 화면용 전체 최신순 조회 및 Pagination 구조 검토
-- [ ] 시간대별 생산량 그래프의 목표선 표시 기준 확정
+- [ ] 알림 상세 화면 구현
+- [ ] 제품 감지 내역 상세 화면 구현
+- [ ] 제품 감지 상세 목록 전체 최신순 조회 및 Pagination 구조 확정
+- [ ] 최근 제품 감지 이미지 실제 경로 제공 방식 최종 연동
+- [ ] 시간대별 생산량 그래프 목표선 표시 기준 확정
 
 ### MQTT 안정성 / 클라이언트 연동
 
 - [ ] MQTT Broker 연결 끊김 및 재연결 처리 보강
 - [ ] MQTT Publisher / Subscriber 예외 및 재시도 처리 보강
-- [ ] 관리자 웹 생산 목표·작업 인원 API 실제 화면 연동
+- [ ] 관리자 Web `smart_sorting/product/detection` 실제 화면 연동
+- [ ] 관리자 Web `smart_sorting/alert` 실제 화면 연동
+- [ ] 관리자 Web `smart_sorting/component/status` 실제 화면 연동
 - [ ] 작업자 Qt REST API 실제 연동
-- [ ] 관리자 웹 실제 장비 `component/status` 연동 확인
+- [ ] 작업자 Qt `smart_sorting/alert` 및 `component/status` 실제 연동
 - [ ] 작업자 UI 라인 제어 MQTT 연동
 - [ ] Raspberry Pi 및 전체 클라이언트 통합 테스트
+
+### 실제 장비 / 통합 테스트
+
+- [ ] Raspberry Pi 제어부 실제 `component/status/update` 메시지 수신 테스트
+- [ ] 실제 카메라·Arduino 오류 발생 및 복구 흐름 통합 테스트
+- [ ] 실제 제품 감지 이미지 경로와 Web 표시 연동
+- [ ] 작업자 교대가 포함된 전체 생산 흐름 End-to-End 테스트
 
 ---
 
 ## 다음 작업
 
-### 1. 관리자 웹 생산 목표·작업 인원 실제 연동
+### 1. 관리자 Web 생산 목표·작업 인원 실제 연동
 
 서버의 생산 목표와 작업 인원 설정 기능은 현재값과 예약값을 모두 지원하도록 구현 및 테스트가 완료된 상태다.
-
-관리자 웹에서는 다음 API를 연동한다.
 
 ```text
 GET /api/production-targets/current
@@ -2238,16 +2406,6 @@ PUT /api/production-targets/current
 
 PUT /api/production-targets/worker-count
 → 작업 인원 설정 또는 다음 날 예약
-```
-
-화면 표시 기준:
-
-```text
-예약값 있음
-→ 예약값 표시
-
-예약값 없음
-→ 현재값 표시
 ```
 
 확인할 항목:
@@ -2261,11 +2419,9 @@ PUT /api/production-targets/worker-count
 
 ---
 
-### 2. 관리자 웹용 하루 생산 현황 기준 재검토
+### 2. 관리자 Web 하루 생산 현황 최종 연동
 
-관리자 웹은 개별 작업자의 세션 현황이 아니라 하루 전체 생산 현황을 확인하도록 구성한다.
-
-기본 역할:
+관리자 Web은 현재 작업자 개인 세션이 아니라 하루 전체 공정 생산 현황을 표시한다.
 
 ```text
 production_targets
@@ -2278,228 +2434,79 @@ production_sessions
 → 하루 누적 생산량
 ```
 
-현재 `production_sessions.started_at`을 기준으로 오늘 생성된 세션을 구분할 수 있다.
-
-관리자 웹에서 최종적으로 필요한 정보:
-
-- 오늘 초콜릿 목표
-- 오늘 사탕 목표
-- 오늘 초콜릿 누적 생산량
-- 오늘 사탕 누적 생산량
-- 오늘 초콜릿 세트 수
-- 오늘 사탕 세트 수
-- 제품별 하루 진행률
+작업자별 DB 실적은 각 세션에 유지하고, 관리자 Web에서는 오늘 세션 수량을 합산해 표시한다.
 
 ---
 
-### 3. 작업자 Qt 목표 표시 연동 확인
+### 3. 작업자 Qt 실제 연동
 
-하루 전체 생산 목표는 서버에서 작업 인원 수에 따라 각 세션에 분배된다.
-
-작업자 Qt에서는 하루 전체 목표가 아니라 현재 작업자 세션에 저장된 목표를 표시한다.
+작업자 Qt는 현재 작업자 세션 기준으로 생산 현황을 표시한다.
 
 ```text
-production_targets
-        ↓
-하루 전체 목표
+하루 전체 생산 목표
         ↓
 daily_worker_count 기준 분배
         ↓
 production_sessions
         ↓
-현재 세션 목표
+현재 작업자 세션 목표 / 실적
         ↓
-작업자 Qt 표시
+작업자 Qt
 ```
 
 확인할 항목:
 
-- 작업 인원 수 변경 시 세션 목표 변경
-- 첫 번째 세션 목표
-- 나머지가 발생하는 경우 앞 세션 우선 분배
-- Qt 화면 목표값 표시
+- 현재 세션 목표 표시
+- 현재 세션 생산량 표시
+- 세션별 진행률 표시
+- `smart_sorting/alert`의 `shortMessage` 표시
+- `smart_sorting/component/status` 상태 반영
+- 작업자 교대 시 새 세션 생산량 0부터 시작
+
+초콜릿 세트 완료 INFO는 서버가 당일 전체 누적 기준으로 계산한 메시지를 Qt에서 그대로 표시한다.
 
 ---
 
-### 4. Component 상태 이벤트 처리 확장
-
-현재 `smart_sorting/component/status/update` 수신 후 `system_components.current_status`를 갱신하는 기능까지 구현되어 있다.
-
-다음 단계에서는 함께 전달되는 `errorCode`, `message`를 실제 오류 처리에 사용한다.
-
-Payload 기준:
-
-```json
-{
-  "componentCode": "CAMERA",
-  "status": "ERROR",
-  "errorCode": "CAMERA_ERROR",
-  "message": "카메라 촬영에 실패했습니다."
-}
-```
-
-서버는 `message` 문자열을 분석하여 오류 종류를 추측하지 않고 `errorCode`를 기준으로 이벤트 종류를 판단한다.
-
----
-
-### 5. Component 상태 기반 Alert 자동 생성
-
-제어부에서 이상 상태가 전달된 경우 Component 상태 갱신과 함께 Alert를 생성하도록 처리한다.
+### 4. 관리자 Web 실시간 MQTT 연동
 
 ```text
-component/status/update 수신
-        ↓
-Component 상태 갱신
-        ↓
-status / errorCode 확인
-        ↓
-Alert 생성 여부 결정
-        ↓
-alerts 저장
-```
+smart_sorting/product/detection
+→ 최근 제품 감지 결과 실시간 갱신
 
-기준:
-
-```text
-NORMAL
-→ Component 상태만 갱신
-→ Alert 생성 안 함
-
-WARNING
-→ Component = WARNING
-→ WARNING Alert 생성
-
-ERROR
-→ Component = ERROR
-→ ERROR Alert 생성
-
-OFFLINE
-→ Component = OFFLINE
-→ 오류 성격에 맞는 Alert 생성
-```
-
----
-
-### 6. Error Code 및 Priority 매핑 구현
-
-`CONTROL_INTERFACE_SPEC.md`에서 정리한 Error Code를 기준으로 Alert Type과 Priority를 서버에서 결정하도록 구현한다.
-
-예:
-
-```text
-NO_DETECTION
-→ CAMERA / WARNING
-→ Priority MEDIUM
-
-CAMERA_ERROR
-→ CAMERA / ERROR
-→ Priority HIGH
-
-SERVO_ACK_TIMEOUT
-→ SORTING_SERVO / ERROR
-→ Priority HIGH
-
-SERIAL_DISCONNECTED
-→ ARDUINO / OFFLINE
-→ Priority HIGH
-```
-
-제어부에서 Priority를 직접 전달하지 않고 서버가 `status`, `errorCode` 기준으로 결정하는 구조를 사용한다.
-
----
-
-### 7. Component 정상 복구 처리
-
-제어부에서 `NORMAL` 상태가 전달되면 현재 Component 상태를 정상으로 갱신한다.
-
-```text
-component/status/update
-        ↓
-status = NORMAL
-        ↓
-system_components.current_status = NORMAL
-```
-
-추가로 해당 Component의 기존 미복구 Alert를 어떤 기준으로 복구 처리할지 구현한다.
-
-정상 상태에서는:
-
-```text
-errorCode = null
-priority = null
-```
-
-을 기준으로 사용한다.
-
----
-
-### 8. 장비 상태 처리 결과 MQTT Publish
-
-제어부 상태 메시지 처리 후 실제 Component 상태가 변경된 경우:
-
-```text
-smart_sorting/component/status
-```
-
-Topic으로 변경된 상태를 전달한다.
-
-새 Alert가 생성된 경우:
-
-```text
 smart_sorting/alert
+→ 신규 INFO / WARNING / ERROR 알림 실시간 갱신
+
+smart_sorting/component/status
+→ 장비 현재 상태 실시간 갱신
 ```
 
-Topic으로 알림을 전달한다.
+기존 REST API는 최초 화면 진입 및 전체 이력 조회 용도로 유지한다.
 
-제품 분류 결과와 Component 상태는 계속 별도의 흐름으로 유지한다.
+---
+
+### 5. 관리자 Web 상세 화면 구현
+
+추가 구현할 상세 기능:
 
 ```text
-smart_sorting/camera/product_detection
-→ 제품 분류 결과
+알림 상세
+→ Alert 상세 정보
+→ Error Code
+→ 발생/확인/복구 상태 및 시간
+→ 관련 Component / 생산 세션 / 제품 감지 정보
 
-smart_sorting/component/status/update
-→ 실제 Component 상태 및 오류
+제품 감지 내역 상세
+→ 전체 제품 감지 기록
+→ 최신순 조회
+→ 제품 유형 / SUCCESS·FAILED / 신뢰도
+→ 이미지
+→ 감지 시간
+→ Pagination
 ```
 
 ---
 
-### 9. MQTT Explorer 전체 시나리오 테스트
-
-다음 상태를 순서대로 테스트한다.
-
-```text
-NORMAL
-WARNING
-ERROR
-OFFLINE
-```
-
-주요 테스트 예:
-
-```text
-CAMERA / WARNING / NO_DETECTION
-CAMERA / ERROR / CAMERA_ERROR
-SORTING_SERVO / ERROR / SERVO_ACK_TIMEOUT
-ARDUINO / OFFLINE / SERIAL_DISCONNECTED
-BUZZER / ERROR / BUZZER_ERROR
-```
-
-각 테스트에서 확인할 항목:
-
-- MQTT Receive 로그
-- `system_components` DB 변경
-- Alert 생성 여부
-- Alert Type / Priority
-- `component/status` Publish
-- `alert` Publish
-- `[COMPONENT]` 로그
-- `[ALERT]` 로그
-
----
-
-### 10. MQTT 연결 안정성 보강
-
-실제 Raspberry Pi 및 클라이언트 연동 전에 MQTT 연결 끊김 상황에 대한 처리를 보강한다.
+### 6. MQTT 연결 안정성 보강
 
 확인 항목:
 
@@ -2509,30 +2516,35 @@ BUZZER / ERROR / BUZZER_ERROR
 - Publisher 연결 실패 처리
 - Publish 실패 및 재시도 처리
 
-MQTT Broker 자체 상태 및 서버 공통 인프라 오류 처리는 제어부용 `CONTROL_INTERFACE_SPEC.md`와 분리하여 서버 기준으로 별도 정리한다.
-
 ---
 
-### 11. 실제 클라이언트 연동
-
-서버 기능 정리 및 개별 테스트 완료 후 각 담당 클라이언트와 연결한다.
-
-- 관리자 웹 생산 목표·작업 인원 API 연동
-- 관리자 웹 하루 누적 생산 현황 연동
-- 관리자 웹 장비 상태 MQTT 연동
-- 관리자 웹 Alert MQTT 연동
-- 작업자 Qt REST API 연동
-- 작업자 Qt MQTT 연동
-- 작업자 UI 라인 제어 MQTT 연동
-
----
-
-### 12. 전체 시스템 통합 테스트
-
-다음 구성요소를 모두 연결한다.
+### 7. 실제 Raspberry Pi / Arduino 연동
 
 ```text
-Raspberry Pi 제어부
+제어부
+→ smart_sorting/component/status/update
+→ ASP.NET Core Server
+→ system_components 상태 갱신
+→ Error Code 기반 Alert 생성
+→ DB 저장
+→ component/status Publish
+→ alert Publish
+```
+
+주요 확인 대상:
+
+- `NO_DETECTION`
+- `CAMERA_ERROR`
+- `SERIAL_DISCONNECTED`
+- Servo / Conveyor / IR / Buzzer 오류
+- `NORMAL` 복구
+
+---
+
+### 8. 전체 시스템 통합 테스트
+
+```text
+Raspberry Pi / Arduino 제어부
         ↓
 MQTT Broker
         ↓
@@ -2540,22 +2552,25 @@ ASP.NET Core Server
    ↓             ↓
 MySQL        MQTT Publish
                   ↓
-          ┌───┴───┐
-          ↓              ↓
-     관리자 Web       작업자 Qt
+             ┌────┴────┐
+             ↓         ↓
+       관리자 Web   작업자 Qt
 ```
 
-최종적으로 다음 흐름을 전체 테스트한다.
+최종 확인:
 
-- 하루 생산 목표 설정
-- 작업 인원 설정 및 다음 날 예약
+- 하루 생산 목표 및 작업 인원 설정
+- 다음 날 목표·작업 인원 예약
 - 작업자별 세션 목표 분배
+- 작업자 로그인 및 생산 세션 시작
 - 제품 감지 및 분류 결과 저장
-- 세션별 생산량 갱신
-- 하루 누적 생산량 계산
-- Component 상태 변경
-- Error Code 기반 Alert 생성
-- Alert 확인 및 복구
-- 관리자 화면 실시간 상태 반영
-- 작업자 화면 생산 목표 표시
-- 작업자 화면 및 라인 제어
+- 작업자별 생산 실적 저장
+- 작업자 교대
+- 당일 전체 누적 기준 초콜릿 세트 INFO
+- Component 이상 상태 및 Error Code 기반 Alert
+- Component 정상 복구
+- 관리자 Web 실시간 상태 반영
+- 작업자 Qt 실시간 상태 반영
+- 실제 제품 이미지 표시
+- 생산 작업 종료
+- DB 최종 기록 확인
