@@ -191,8 +191,7 @@ namespace SmartSortingServer.Services {
         }
 
         // 제품 감지 MQTT 메시지 처리
-        private async Task HandleProductDetectionAsync(
-            string payload) {
+        private async Task HandleProductDetectionAsync(string payload) {
 
             try {
                 var request =
@@ -239,8 +238,7 @@ namespace SmartSortingServer.Services {
         }
 
         // 컴포넌트 상태 MQTT 메시지 처리
-        private async Task HandleComponentStatusUpdateAsync(
-            string payload) {
+        private async Task HandleComponentStatusUpdateAsync(string payload) {
 
             try {
                 var request =
@@ -262,10 +260,20 @@ namespace SmartSortingServer.Services {
 
                 // 입력값 정리
                 string componentCode =
-                    request.ComponentCode.ToUpper();
+                    request.ComponentCode
+                        .Trim()
+                        .ToUpper();
 
                 string status =
-                    request.Status.ToUpper();
+                    request.Status
+                        .Trim()
+                        .ToUpper();
+
+                string? errorCode =
+                    string.IsNullOrWhiteSpace(request.ErrorCode)
+                        ? null
+                        : request.ErrorCode.Trim().ToUpper();
+
 
                 // 상태값 확인
                 string[] allowedStatuses = {
@@ -285,13 +293,51 @@ namespace SmartSortingServer.Services {
                     return;
                 }
 
-                // Scoped DbContext 생성
+
+                // NORMAL이면 ErrorCode가 없어야 함
+                if (status == "NORMAL" &&
+                    errorCode != null) {
+
+                    _logger.LogError(
+                        "[MQTT] NORMAL 상태에는 ErrorCode를 사용할 수 없음 - Component: {ComponentCode}, ErrorCode: {ErrorCode}",
+                        componentCode,
+                        errorCode
+                    );
+
+                    return;
+                }
+
+
+                // 비정상 상태이면 ErrorCode가 필요함
+                if (status != "NORMAL" &&
+                    errorCode == null) {
+
+                    _logger.LogError(
+                        "[MQTT] 비정상 상태에는 ErrorCode가 필요함 - Component: {ComponentCode}, Status: {Status}",
+                        componentCode,
+                        status
+                    );
+
+                    return;
+                }
+
+
+                // Scoped Service 생성
                 using var scope =
                     _scopeFactory.CreateScope();
 
                 var context =
                     scope.ServiceProvider
                         .GetRequiredService<AppDbContext>();
+
+                var componentAlertService =
+                    scope.ServiceProvider
+                        .GetRequiredService<ComponentAlertService>();
+
+                var mqttPublisher =
+                    scope.ServiceProvider
+                        .GetRequiredService<MqttPublisherService>();
+
 
                 // 컴포넌트 조회
                 var component =
@@ -310,6 +356,116 @@ namespace SmartSortingServer.Services {
                     return;
                 }
 
+
+                // 비정상 상태인 경우 ErrorCode 기반 정보 생성
+                if (status != "NORMAL" &&
+                    errorCode != null) {
+
+                    var alertInfo =
+                        componentAlertService
+                            .GetAlertInfo(errorCode);
+
+                    if (alertInfo.ComponentCode == "UNKNOWN") {
+                        _logger.LogError(
+                            "[MQTT] 정의되지 않은 ErrorCode - Component: {ComponentCode}, ErrorCode: {ErrorCode}",
+                            componentCode,
+                            errorCode
+                        );
+
+                        return;
+                    }
+
+                    if (alertInfo.ComponentCode != componentCode) {
+                        _logger.LogError(
+                            "[MQTT] Component와 ErrorCode 불일치 - Component: {ComponentCode}, ErrorCode: {ErrorCode}, ExpectedComponent: {ExpectedComponent}",
+                            componentCode,
+                            errorCode,
+                            alertInfo.ComponentCode
+                        );
+
+                        return;
+                    }
+
+                    if (alertInfo.Status != status) {
+                        _logger.LogError(
+                            "[MQTT] Status와 ErrorCode 불일치 - Component: {ComponentCode}, Status: {Status}, ErrorCode: {ErrorCode}, ExpectedStatus: {ExpectedStatus}",
+                            componentCode,
+                            status,
+                            errorCode,
+                            alertInfo.Status
+                        );
+
+                        return;
+                    }
+
+                    _logger.LogInformation(
+                        "[COMPONENT] 오류 정보 - Component: {ComponentCode}, ErrorCode: {ErrorCode}, Message: {Message}, Priority: {Priority}",
+                        componentCode,
+                        errorCode,
+                        alertInfo.DetailMessage,
+                        alertInfo.Priority
+                    );
+
+                    var createdAlert =
+                        await componentAlertService
+                            .CreateComponentAlertAsync(
+                                component,
+                                errorCode
+                            );
+
+                    if (createdAlert != null) {
+                        _logger.LogInformation(
+                            "[ALERT] 컴포넌트 알림 생성 - AlertId: {AlertId}, Component: {ComponentCode}, ErrorCode: {ErrorCode}",
+                            createdAlert.AlertId,
+                            componentCode,
+                            errorCode
+                        );
+
+                        await mqttPublisher.PublishAsync(
+                            "smart_sorting/alert",
+                            new {
+                                alertId = createdAlert.AlertId,
+                                alertType = createdAlert.AlertType,
+                                priority = createdAlert.Priority,
+                                componentCode = componentCode,
+                                errorCode = errorCode,
+
+                                // Qt 작업자 화면용 짧은 메시지
+                                shortMessage = alertInfo.ShortMessage,
+
+                                alertMessage = alertInfo.DetailMessage,
+
+                                createdAt = createdAlert.CreatedAt
+                            }
+                        );
+                    }
+                    else {
+                        _logger.LogInformation(
+                            "[ALERT] 동일한 미복구 알림이 이미 존재함 - Component: {ComponentCode}, ErrorCode: {ErrorCode}",
+                            componentCode,
+                            errorCode
+                        );
+                    }
+                }
+
+                // NORMAL 상태인 경우 기존 미복구 Alert 복구 처리
+                if (status == "NORMAL") {
+
+                    int recoveredCount =
+                        await componentAlertService
+                            .RecoverComponentAlertsAsync(
+                                component
+                            );
+
+                    if (recoveredCount > 0) {
+                        _logger.LogInformation(
+                            "[ALERT] 컴포넌트 알림 복구 - Component: {ComponentCode}, Count: {Count}",
+                            componentCode,
+                            recoveredCount
+                        );
+                    }
+                }
+
                 // 기존 상태 저장
                 string previousStatus =
                     component.CurrentStatus;
@@ -323,6 +479,7 @@ namespace SmartSortingServer.Services {
 
                 await context.SaveChangesAsync();
 
+
                 // 실제 상태가 변경된 경우 로그 출력
                 if (previousStatus != component.CurrentStatus) {
                     _logger.LogInformation(
@@ -331,6 +488,14 @@ namespace SmartSortingServer.Services {
                         previousStatus,
                         component.CurrentStatus
                     );
+
+                    await mqttPublisher.PublishAsync(
+                       "smart_sorting/component/status",
+                       new {
+                           componentCode = component.ComponentCode,
+                           status = component.CurrentStatus
+                       }
+                   );
                 }
             }
             catch (Exception ex) {

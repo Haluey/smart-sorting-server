@@ -50,6 +50,9 @@ namespace SmartSortingServer.Services {
             // 이번 처리에서 생성된 알림
             Alert? createdAlert = null;
 
+            // 이번 처리에서 완료된 초콜릿 누적 세트 수
+            int? completedChocolateSetCount = null;
+
             // 분류 성공인 경우
             if (request.ClassificationStatus == "SUCCESS") {
 
@@ -108,6 +111,32 @@ namespace SmartSortingServer.Services {
             await _context.SaveChangesAsync();
 
             // -------------------------------------------------
+            // 신규 제품 감지 MQTT Publish
+            // -------------------------------------------------
+
+            await _mqttPublisher.PublishAsync(
+                "smart_sorting/product/detection",
+                new {
+                    detectionId = productDetection.ProductDetectionId,
+
+                    classificationStatus =
+                        productDetection.ClassificationStatus,
+
+                    productTypeCode =
+                        productType?.ProductTypeCode,
+
+                    confidence =
+                        productDetection.Confidence,
+
+                    imagePath =
+                        productDetection.ImagePath,
+
+                    detectedAt =
+                        productDetection.DetectedAt
+                }
+            );
+
+            // -------------------------------------------------
             // 분류 성공 처리
             // -------------------------------------------------
 
@@ -117,16 +146,36 @@ namespace SmartSortingServer.Services {
                 // 초콜릿
                 if (productType.ProductTypeCode == "CHOCOLATE") {
 
+                    DateTime today = DateTime.Today;
+                    DateTime tomorrow = today.AddDays(1);
+
+                    // 이번 감지 전 오늘 전체 초콜릿 생산 개수
+                    int totalChocolateCountBefore =
+                        await _context.ProductionSessions
+                            .Where(s =>
+                                s.StartedAt >= today
+                                && s.StartedAt < tomorrow
+                            )
+                            .SumAsync(s => s.ChocolateCount);
+
+                    // 현재 작업자의 생산량 증가
                     productionSession.ChocolateCount += 1;
+
+                    // 이번 감지를 포함한 오늘 전체 누적 생산량
+                    int totalChocolateCount =
+                        totalChocolateCountBefore + 1;
 
                     // 초콜릿 세트 완료 INFO 알림 생성
                     if (productType.UnitPerSet > 0
-                        && productionSession.ChocolateCount
+                        && totalChocolateCount
                             % productType.UnitPerSet == 0) {
 
                         int completedSetCount =
-                            productionSession.ChocolateCount
+                            totalChocolateCount
                             / productType.UnitPerSet;
+
+                        completedChocolateSetCount =
+                            completedSetCount;
 
                         var infoAlert = new Alert {
                             SessionId =
@@ -352,6 +401,15 @@ namespace SmartSortingServer.Services {
                         componentCode =
                             componentCode,
 
+                        // INFO 알림은 ErrorCode 없음
+                        errorCode =
+                            (string?)null,
+
+                        // Qt 작업자 화면용
+                        shortMessage =
+                            $"초콜릿 {completedChocolateSetCount}세트 완료",
+
+                        // Web 상세 표시용
                         alertMessage =
                             createdAlert.AlertMessage,
 

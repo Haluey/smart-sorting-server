@@ -273,6 +273,10 @@ CREATE TABLE alerts (
     alert_type VARCHAR(20) NOT NULL,
     priority VARCHAR(20) NOT NULL,
 
+    -- Component 상태 이벤트의 오류 식별 코드
+    -- INFO 또는 수동 알림처럼 Error Code가 없는 경우 NULL
+    error_code VARCHAR(50) NULL,
+
     recovery_status VARCHAR(20) NULL,
     check_status VARCHAR(20) NULL,
 
@@ -470,7 +474,7 @@ INSERT INTO users (
         'ADMIN'
     ),
     (
-        'worker01',
+        '2601',
         '$2a$11$YZfLhNms4lQpjgQNk3z4O.UEsg8NYXsQrjw8II7KA2v.jwO99quni',
         '김작업',
         'WORKER'
@@ -571,6 +575,7 @@ INSERT INTO alerts (
     checked_by_user_id,
     alert_type,
     priority,
+    error_code,
     recovery_status,
     check_status,
     alert_message,
@@ -590,6 +595,7 @@ INSERT INTO alerts (
         NULL,
         'INFO',
         'LOW',
+        NULL,
         NULL,
         NULL,
         '생산 작업이 정상적으로 시작되었습니다.',
@@ -621,6 +627,7 @@ INSERT INTO alerts (
         NULL,
         'ERROR',
         'HIGH',
+        NULL,
         'RECOVERED',
         'UNCHECKED',
         '카메라 촬영 결과에서 제품 유형을 식별하지 못했습니다.',

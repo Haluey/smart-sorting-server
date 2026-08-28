@@ -304,6 +304,10 @@ namespace SmartSortingServer.Data {
                     .HasMaxLength(20)
                     .IsRequired();
 
+                entity.Property(e => e.ErrorCode)
+                    .HasColumnName("error_code")
+                    .HasMaxLength(50);
+
                 entity.Property(e => e.RecoveryStatus)
                     .HasColumnName("recovery_status")
                     .HasMaxLength(20);

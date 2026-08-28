@@ -39,6 +39,7 @@ namespace SmartSortingServer.Controllers {
                     checkedByUserId = a.CheckedByUserId,
                     alertType = a.AlertType,
                     priority = a.Priority,
+                    errorCode = a.ErrorCode,
                     recoveryStatus = a.RecoveryStatus,
                     checkStatus = a.CheckStatus,
                     alertMessage = a.AlertMessage,
@@ -106,6 +107,18 @@ namespace SmartSortingServer.Controllers {
             if (request.AlertMessage.Length > 1000) {
                 return BadRequest(new {
                     message = "알림 메시지는 1000자 이하로 입력해야 합니다."
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.ShortMessage)) {
+                return BadRequest(new {
+                    message = "짧은 알림 메시지가 필요합니다."
+                });
+            }
+
+            if (request.ShortMessage.Length > 50) {
+                return BadRequest(new {
+                    message = "짧은 알림 메시지는 50자 이하로 입력해야 합니다."
                 });
             }
 
@@ -229,7 +242,16 @@ namespace SmartSortingServer.Controllers {
                     alertType = alert.AlertType,
                     priority = alert.Priority,
                     componentCode = component.ComponentCode,
+
+                    // 수동 생성 알림은 ErrorCode 없음
+                    errorCode = (string?)null,
+
+                    // Qt 작업자 화면용 짧은 메시지
+                    shortMessage = request.ShortMessage,
+
+                    // Web 상세 표시용
                     alertMessage = alert.AlertMessage,
+
                     createdAt = alert.CreatedAt
                 }
             );
@@ -262,6 +284,7 @@ namespace SmartSortingServer.Controllers {
                 productDetectionId = alert.ProductDetectionId,
                 alertType = alert.AlertType,
                 priority = alert.Priority,
+                shortMessage = request.ShortMessage,
                 alertMessage = alert.AlertMessage,
                 createdAt = alert.CreatedAt
             });

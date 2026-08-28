@@ -32,6 +32,7 @@ namespace SmartSortingServer {
             });
 
             builder.Services.AddScoped<ProductDetectionService>();
+            builder.Services.AddScoped<ComponentAlertService>();
             builder.Services.AddSingleton<MqttPublisherService>();
             builder.Services.AddHostedService<MqttSubscriberService>();
 

@@ -27,6 +27,10 @@
         // LOW / MEDIUM / HIGH
         public string Priority { get; set; } = string.Empty;
 
+        // 오류 식별 코드
+        // Component 상태 이벤트와 무관한 알림이면 NULL
+        public string? ErrorCode { get; set; }
+
         // 복구 상태
         // NOT_RECOVERED / RECOVERED
         // INFO 알림이면 NULL
