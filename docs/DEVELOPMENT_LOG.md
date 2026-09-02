@@ -2091,6 +2091,192 @@ Qt 생산 현황
 
 ---
 
+## 2026-09-02 - 관리자 Web 제품 감지 내역 및 알림/이상 내역 API 확장
+
+### 제품 감지 내역 조회 API 구현
+
+- 관리자 Web의 제품 이미지 화면에서 전체 제품 감지 이력을 조회할 수 있도록 제품 감지 목록 API를 구현했습니다.
+- `GET /api/product-detections`에서 페이지네이션을 지원하도록 구성했습니다.
+  - `page` 기본값: `1`
+  - `pageSize` 기본값: `15`
+  - 최대 `pageSize`: `100`
+- 최신 감지 결과부터 표시할 수 있도록 `product_detection_id` 내림차순으로 조회하도록 구성했습니다.
+- 목록 응답에 다음 페이지 정보를 포함하도록 구성했습니다.
+  - `page`
+  - `pageSize`
+  - `totalCount`
+  - `totalPages`
+
+### 제품 감지 내역 필터 및 검색 기능 구현
+
+- 관리자 Web의 제품 이미지 화면 필터와 연동할 수 있도록 제품 유형 및 분류 상태 필터를 추가했습니다.
+- 제품 유형 필터를 다음 값으로 제한했습니다.
+  - `CHOCOLATE`
+  - `CANDY`
+- 분류 실패 조회를 위해 `status=FAILED` 필터를 추가했습니다.
+- 허용되지 않은 제품 유형 또는 분류 상태가 전달되면 `400 Bad Request`를 반환하도록 검증 로직을 추가했습니다.
+- 감지 ID를 이용한 정확 일치 검색 기능을 구현했습니다.
+- 숫자가 아닌 감지 ID 검색값이 전달되면 `400 Bad Request`를 반환하도록 처리했습니다.
+- 제품 유형, 분류 상태, 감지 ID 검색을 함께 사용할 수 있도록 구성했습니다.
+
+### 제품 감지 상세 조회 API 구현
+
+- 관리자 Web에서 특정 감지 결과의 상세 정보를 조회할 수 있도록 상세 조회 API를 구현했습니다.
+  - `GET /api/product-detections/{productDetectionId}`
+- 제품 감지 상세 응답에 다음 정보를 포함하도록 구성했습니다.
+  - 제품 감지 ID
+  - 생산 작업 ID
+  - 제품 유형 코드
+  - 신뢰도
+  - 이미지 경로
+  - 분류 상태
+  - 감지 시각
+- 존재하지 않는 감지 ID를 조회할 경우 `404 Not Found`를 반환하도록 처리했습니다.
+- 관리자 Web에서는 `product_detection_id`를 별도의 표시용 ID로 가공하지 않고 DB의 실제 ID 값을 그대로 사용하도록 결정했습니다.
+
+### 제품 감지 API 시간 형식 정리
+
+- 관리자 Web에서 시간대를 명확하게 처리할 수 있도록 제품 감지 REST API의 `detectedAt` 형식을 정리했습니다.
+- DB에 저장된 KST 기준 시각에 `+09:00` 오프셋을 명시하여 ISO 8601 형식으로 반환하도록 구성했습니다.
+
+```text
+2026-09-02T14:30:00+09:00
+```
+
+- 목록 조회와 상세 조회에서 동일한 시간 형식을 사용하도록 통일했습니다.
+- `productTypeCode`, `confidence`, `imagePath`는 분류 실패 등의 경우 `null`이 될 수 있도록 기존 DB 구조를 유지했습니다.
+
+### 알림 목록 조회 API 확장
+
+- 관리자 Web의 알림/이상 내역 화면과 연동할 수 있도록 기존 알림 조회 API를 확장했습니다.
+- `GET /api/alerts`에 페이지네이션을 적용했습니다.
+  - `page` 기본값: `1`
+  - `pageSize` 기본값: `10`
+  - 최대 `pageSize`: `100`
+- 최신 알림부터 표시할 수 있도록 `alert_id` 내림차순으로 조회하도록 구성했습니다.
+- 목록 응답에 페이지 정보를 포함하도록 구성했습니다.
+  - `page`
+  - `pageSize`
+  - `totalCount`
+  - `totalPages`
+- 관리자 Web에서 알림 발생 장비를 바로 표시할 수 있도록 목록 응답에 `componentCode`를 추가했습니다.
+
+### 알림 상태 필터 및 검색 기능 구현
+
+- 관리자 Web의 알림 상태 필터와 연동할 수 있도록 `status` Query Parameter를 추가했습니다.
+- 하나의 `status` 파라미터에서 다음 상태를 구분하도록 구성했습니다.
+  - `UNCHECKED`: 미확인
+  - `NOT_RECOVERED`: 미복구
+  - `RECOVERED`: 복구 완료
+- 전체 조회는 `status`를 전달하지 않는 방식으로 구성했습니다.
+- 허용되지 않은 상태값이 전달되면 `400 Bad Request`를 반환하도록 검증 로직을 추가했습니다.
+- 장비 코드 또는 알림 내용을 기준으로 검색할 수 있도록 `search` Query Parameter를 추가했습니다.
+- 상태 필터와 검색 조건을 동시에 적용할 수 있도록 구성했습니다.
+
+```text
+GET /api/alerts?status=NOT_RECOVERED&search=CAMERA
+```
+
+### 알림 요약 통계 API 구현
+
+- 관리자 Web 알림/이상 내역 화면 상단의 요약 정보를 제공하기 위해 알림 통계 API를 구현했습니다.
+  - `GET /api/alerts/summary`
+- 다음 세 가지 통계를 반환하도록 구성했습니다.
+  - `todayCount`: 오늘 발생한 전체 알림 수
+  - `uncheckedCount`: 날짜와 관계없이 미확인 상태인 알림 수
+  - `notRecoveredCount`: 날짜와 관계없이 미복구 상태인 알림 수
+- `INFO` 알림은 확인 및 복구 대상이 아니므로 `UNCHECKED`, `NOT_RECOVERED` 집계에 포함되지 않도록 기존 `NULL` 상태 구조를 그대로 활용했습니다.
+
+### 알림 상세 조회 API 구현
+
+- 관리자 Web에서 선택한 알림의 상세 정보를 조회할 수 있도록 상세 조회 API를 구현했습니다.
+  - `GET /api/alerts/{alertId}`
+- 상세 응답에 다음 정보를 포함하도록 구성했습니다.
+  - 알림 ID
+  - 생산 작업 ID
+  - 제품 감지 ID
+  - 확인 사용자 ID
+  - 알림 유형
+  - 우선순위
+  - 오류 코드
+  - 복구 상태
+  - 확인 상태
+  - 알림 내용
+  - 시스템 구성요소 코드
+  - 발생 시각
+  - 복구 시각
+  - 확인 시각
+- 연결된 시스템 구성요소가 없는 `INFO` 알림은 `componentCode`가 `null`이 될 수 있도록 처리했습니다.
+- 존재하지 않는 알림 ID를 조회할 경우 `404 Not Found`를 반환하도록 처리했습니다.
+
+### 알림 REST API 시간 형식 통일
+
+- 관리자 Web의 시간 표시 기준을 통일하기 위해 알림 REST API의 시간 응답을 KST 기준 ISO 8601 형식으로 정리했습니다.
+- 다음 시간 필드에 `+09:00` 오프셋을 포함하도록 처리했습니다.
+  - `createdAt`
+  - `checkedAt`
+  - `recoveredAt`
+- 적용 대상 API를 다음과 같이 정리했습니다.
+  - 알림 목록 조회
+  - 알림 상세 조회
+  - 수동 알림 생성 응답
+  - 알림 확인 처리 응답
+  - 알림 복구 처리 응답
+- 기존 MQTT 수신부에 영향을 주지 않도록 `smart_sorting/alert`의 MQTT `createdAt` 형식은 변경하지 않았습니다.
+
+### 관리자 Web 알림 연동 기준 정리
+
+- 관리자 Web의 알림/이상 내역 화면에서는 다음 REST API를 사용하도록 정리했습니다.
+
+```text
+GET   /api/alerts
+GET   /api/alerts/summary
+GET   /api/alerts/{alertId}
+PATCH /api/alerts/{alertId}/check
+PATCH /api/alerts/{alertId}/recover
+```
+
+- 알림 확인 및 복구 API는 별도의 Request Body 없이 URL의 `alertId`를 기준으로 처리하도록 구성했습니다.
+- 관리자 Web에서는 `shortMessage`를 사용하지 않고 DB에 저장되는 `alertMessage`를 표시하도록 결정했습니다.
+- `shortMessage`는 Qt 작업자 화면의 짧은 알림 표시용으로 유지했습니다.
+- 수동 알림 생성 API `POST /api/alerts`는 현재 관리자 Web 기능에서는 사용하지 않도록 결정했습니다.
+- 관리자 Web에서는 조회, 검색, 필터, 상세 조회, 확인, 복구 기능만 사용하도록 정리했습니다.
+
+### 알림 실시간 연동 방식 정리
+
+- 신규 알림은 기존 `smart_sorting/alert` MQTT Topic을 통해 관리자 Web에서 실시간으로 받을 수 있도록 기존 구조를 유지했습니다.
+- MQTT 실시간 연동은 알림 **목록 화면의 신규 알림 반영 용도**로 사용하도록 정리했습니다.
+- 알림 상세 화면에서는 MQTT를 사용하지 않고 REST API만 사용하도록 결정했습니다.
+- 상세 화면 진입 시 `GET /api/alerts/{alertId}`를 통해 최신 상세 정보를 조회하도록 구성했습니다.
+- 확인 및 복구 처리 후에는 PATCH 응답 또는 상세 API 재조회 결과를 이용해 화면 상태를 갱신할 수 있도록 정리했습니다.
+
+### Web 연동 문서 정리
+
+- 관리자 Web의 알림/이상 내역 화면 구현에 필요한 API 연동 기준을 별도 문서로 정리했습니다.
+- 목록, 요약 통계, 상세 조회, 확인, 복구 API의 Endpoint와 상태값을 문서화했습니다.
+- REST API의 KST 시간 형식과 MQTT 시간 형식의 차이를 명시했습니다.
+- Web에서 사용하는 필드와 Qt 작업자 화면에서 사용하는 필드를 구분했습니다.
+
+### 동작 테스트
+
+- 제품 감지 목록 조회 및 페이지네이션 동작 확인
+- 제품 유형 `CHOCOLATE`, `CANDY` 필터 동작 확인
+- `FAILED` 분류 상태 필터 동작 확인
+- 제품 감지 ID 검색 및 복합 조건 조회 동작 확인
+- 잘못된 제품 유형 및 분류 상태 요청 시 `400 Bad Request` 반환 확인
+- 제품 감지 목록 및 상세 응답의 `detectedAt`에 `+09:00` 오프셋이 포함되는 것을 확인
+- 알림 목록 조회 및 10개 단위 페이지네이션 동작 확인
+- `UNCHECKED`, `NOT_RECOVERED`, `RECOVERED` 상태 필터 동작 확인
+- 장비 코드 및 알림 내용 검색 동작 확인
+- 상태 필터와 검색 조건의 복합 조회 동작 확인
+- 알림 목록 응답에 `componentCode`가 포함되는 것을 확인
+- 알림 요약 통계의 미확인 및 미복구 건수가 목록 필터 결과와 일치하는 것을 확인
+- 알림 상세 조회 정상 동작 및 존재하지 않는 ID의 `404 Not Found` 처리 확인
+- 잘못된 알림 상태값 요청 시 `400 Bad Request` 반환 확인
+- 알림 REST 응답의 `createdAt`, `checkedAt`, `recoveredAt`에 KST `+09:00` 오프셋이 적용되는 것을 확인
+
+---
+
 ## 현재 완료 상태
 
 - [x] 데이터베이스 생성 스크립트
@@ -2153,7 +2339,7 @@ Qt 생산 현황
 - [x] 예약 생산 목표와 예약 작업 인원 상호 검증
 - [x] 예약 생산 목표·작업 인원 서버 재시작 후 유지 확인
 - [x] 다음 날 예약 생산 목표·작업 인원 적용 시뮬레이션 테스트
-- [x] 예약값 적용 후 `next_\*` 필드 `NULL` 초기화 확인
+- [x] 예약값 적용 후 `next_\\*` 필드 `NULL` 초기화 확인
 - [x] 생산 목표 API와 작업 인원 API 역할 분리
 - [x] 관리자 웹용 생산 목표·작업 인원 연동 기준 문서화
 
@@ -2209,6 +2395,15 @@ Qt 생산 현황
 - [x] 작업자 교대 후 새 세션이 0부터 시작해도 이전 생산량과 합산하여 세트 완료 INFO가 이어지도록 처리
 - [x] 당일 누적 120개 도달 시 `초콜릿 12세트 완료` INFO Publish 테스트
 - [x] 작업자별 `production_sessions.chocolate_count` 실적은 세션별로 유지되는 구조 확인
+- [x] 관리자 Web 제품 감지 전체 내역 조회 API 구현
+- [x] 제품 감지 목록 최신순 조회 및 Pagination 구조 확정
+- [x] 제품 유형 `CHOCOLATE / CANDY` 필터 구현
+- [x] 분류 상태 `FAILED` 필터 구현
+- [x] 감지 ID 정확 일치 검색 구현
+- [x] 잘못된 제품 유형·분류 상태·감지 ID 검색값 `400 Bad Request` 처리
+- [x] 제품 감지 상세 조회 API `GET /api/product-detections/{productDetectionId}` 구현
+- [x] 제품 감지 목록·상세 `detectedAt`을 KST `+09:00` ISO 8601 형식으로 통일
+- [x] 제품 감지 Web 연동용 Nullable 필드 기준 정리
 
 ### 시스템 구성요소
 
@@ -2255,6 +2450,20 @@ Qt 생산 현황
 - [x] 수동 알림 생성 시 `shortMessage` 필수 및 50자 이하 검증 추가
 - [x] INFO 알림 MQTT에도 공통 알림 Payload 구조 적용
 - [x] `CAMERA_ERROR`, `NO_DETECTION`, `SERIAL_DISCONNECTED`, `NORMAL` 복구 시나리오 테스트
+- [x] 관리자 Web 알림 목록 10개 단위 Pagination 구현
+- [x] 알림 목록 응답에 `componentCode` 추가
+- [x] 알림 상태 필터 `UNCHECKED / NOT_RECOVERED / RECOVERED` 구현
+- [x] 잘못된 알림 상태값 `400 Bad Request` 처리
+- [x] 장비 코드 또는 알림 내용 검색 기능 구현
+- [x] 상태 필터와 검색 조건 복합 조회 테스트
+- [x] 알림 요약 통계 API `GET /api/alerts/summary` 구현
+- [x] 오늘 발생 / 미확인 / 미복구 집계 기준 확정
+- [x] 알림 상세 조회 API `GET /api/alerts/{alertId}` 구현
+- [x] 알림 목록·상세·확인·복구 REST 시간 응답을 KST `+09:00` ISO 8601 형식으로 통일
+- [x] MQTT `createdAt`은 기존 형식 유지로 결정
+- [x] 관리자 Web은 `alertMessage`, Qt는 `shortMessage` 사용 기준 유지
+- [x] 알림 확인·복구 PATCH API는 Request Body 없이 호출하는 구조 확정
+- [x] 수동 알림 생성 API는 현재 관리자 Web 미사용으로 결정
 
 ### MQTT
 
@@ -2312,6 +2521,10 @@ Qt 생산 현황
 - [x] 관리자 Web Alert MQTT 변경사항 연동 문서 작성
 - [x] Qt는 `shortMessage`, 관리자 Web은 `alertMessage` 중심으로 사용하는 기준 확정
 - [x] REST는 초기/이력 조회, MQTT는 신규 실시간 이벤트 처리로 역할 분리
+- [x] 관리자 Web 제품 감지 내역 조회·필터·검색·상세 REST 연동 기준 정리
+- [x] 관리자 Web 알림 목록·요약·검색·필터·상세·확인·복구 REST 연동 기준 정리
+- [x] 알림 목록 화면은 MQTT 신규 알림 실시간 반영, 상세 화면은 REST 전용으로 역할 분리
+- [x] 관리자 Web 알림/이상 내역 API 연동 문서 작성
 
 ### NLog / 서버 로그
 
@@ -2364,9 +2577,8 @@ Qt 생산 현황
 
 ### 관리자 Web 상세 기능
 
-- [ ] 알림 상세 화면 구현
-- [ ] 제품 감지 내역 상세 화면 구현
-- [ ] 제품 감지 상세 목록 전체 최신순 조회 및 Pagination 구조 확정
+- [ ] 알림 상세 화면 실제 Web 연동
+- [ ] 제품 감지 내역 상세 화면 실제 Web 연동
 - [ ] 최근 제품 감지 이미지 실제 경로 제공 방식 최종 연동
 - [ ] 시간대별 생산량 그래프 목표선 표시 기준 확정
 
@@ -2399,12 +2611,15 @@ Qt 생산 현황
 
 ```text
 GET /api/production-targets/current
+
 → 현재/예약 생산 목표 및 작업 인원 조회
 
 PUT /api/production-targets/current
+
 → 생산 목표 설정 또는 다음 날 예약
 
 PUT /api/production-targets/worker-count
+
 → 작업 인원 설정 또는 다음 날 예약
 ```
 
@@ -2425,12 +2640,15 @@ PUT /api/production-targets/worker-count
 
 ```text
 production_targets
+
 → 하루 전체 목표
 
 production_sessions
+
 → 작업자별 생산 실적
 
 오늘 production_sessions 합계
+
 → 하루 누적 생산량
 ```
 
@@ -2444,13 +2662,13 @@ production_sessions
 
 ```text
 하루 전체 생산 목표
-        ↓
+        ↓
 daily_worker_count 기준 분배
-        ↓
+        ↓
 production_sessions
-        ↓
+        ↓
 현재 작업자 세션 목표 / 실적
-        ↓
+        ↓
 작업자 Qt
 ```
 
@@ -2470,39 +2688,69 @@ production_sessions
 ### 4. 관리자 Web 실시간 MQTT 연동
 
 ```text
+
 smart_sorting/product/detection
+
 → 최근 제품 감지 결과 실시간 갱신
 
 smart_sorting/alert
-→ 신규 INFO / WARNING / ERROR 알림 실시간 갱신
+
+→ 알림 목록의 신규 INFO / WARNING / ERROR 실시간 갱신
+
+→ 알림 상세 화면은 REST API만 사용
 
 smart_sorting/component/status
+
 → 장비 현재 상태 실시간 갱신
+
 ```
 
 기존 REST API는 최초 화면 진입 및 전체 이력 조회 용도로 유지한다.
 
 ---
 
-### 5. 관리자 Web 상세 화면 구현
+### 5. 관리자 Web 상세 화면 실제 연동
 
-추가 구현할 상세 기능:
+알림/제품 감지 상세 조회에 필요한 서버 REST API와 조회 구조는 구현이 완료된 상태다.
 
 ```text
+
 알림 상세
+
+→ GET /api/alerts/{alertId}
+
 → Alert 상세 정보
+
 → Error Code
+
 → 발생/확인/복구 상태 및 시간
+
 → 관련 Component / 생산 세션 / 제품 감지 정보
 
+→ 상세 화면은 MQTT 없이 REST API만 사용
+
 제품 감지 내역 상세
-→ 전체 제품 감지 기록
-→ 최신순 조회
-→ 제품 유형 / SUCCESS·FAILED / 신뢰도
-→ 이미지
-→ 감지 시간
+
+→ GET /api/product-detections
+
+→ GET /api/product-detections/{productDetectionId}
+
+→ 전체 제품 감지 기록 최신순 조회
+
+→ 제품 유형 / FAILED 필터
+
+→ 감지 ID 검색
+
+→ 신뢰도 / 이미지 경로 / 감지 시간
+
 → Pagination
+
 ```
+
+남은 작업:
+
+- 관리자 Web 실제 상세 화면 연동
+- 제품 이미지 실제 경로 제공 및 표시 방식 최종 연동
 
 ---
 
@@ -2521,14 +2769,23 @@ smart_sorting/component/status
 ### 7. 실제 Raspberry Pi / Arduino 연동
 
 ```text
+
 제어부
+
 → smart_sorting/component/status/update
+
 → ASP.NET Core Server
+
 → system_components 상태 갱신
+
 → Error Code 기반 Alert 생성
+
 → DB 저장
+
 → component/status Publish
+
 → alert Publish
+
 ```
 
 주요 확인 대상:
@@ -2545,16 +2802,17 @@ smart_sorting/component/status
 
 ```text
 Raspberry Pi / Arduino 제어부
-        ↓
+        ↓
 MQTT Broker
-        ↓
+        ↓
 ASP.NET Core Server
-   ↓             ↓
-MySQL        MQTT Publish
-                  ↓
-             ┌────┴────┐
-             ↓         ↓
-       관리자 Web   작업자 Qt
+   ┌───┴───┐
+   ↓              ↓
+MySQL        MQTT Publish
+                   ↓
+             ┌──┴──┐
+             ↓          ↓
+       관리자 Web    작업자 Qt
 ```
 
 최종 확인:

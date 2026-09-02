@@ -28,13 +28,108 @@ namespace SmartSortingServer.Controllers {
 
         // 알림 전체 조회
         [HttpGet]
-        public async Task<IActionResult> GetAlerts() {
-            var alerts = await _context.Alerts
-                .OrderByDescending(a => a.CreatedAt)
+        public async Task<IActionResult> GetAlerts(
+            int page = 1,
+            int pageSize = 10,
+            string? status = null,
+            string? search = null) {
+
+            if (page < 1) {
+                page = 1;
+            }
+
+            if (pageSize < 1) {
+                pageSize = 10;
+            }
+
+            if (pageSize > 100) {
+                pageSize = 100;
+            }
+
+            var query = _context.Alerts
+                .AsNoTracking()
+                .AsQueryable();
+
+            // 상태 필터
+            if (!string.IsNullOrWhiteSpace(status)) {
+
+                string normalizedStatus =
+                    status.Trim().ToUpper();
+
+                if (normalizedStatus == "UNCHECKED") {
+                    query = query.Where(a =>
+                        a.CheckStatus == "UNCHECKED"
+                    );
+                }
+                else if (normalizedStatus == "NOT_RECOVERED") {
+                    query = query.Where(a =>
+                        a.RecoveryStatus == "NOT_RECOVERED"
+                    );
+                }
+                else if (normalizedStatus == "RECOVERED") {
+                    query = query.Where(a =>
+                        a.RecoveryStatus == "RECOVERED"
+                    );
+                }
+                else {
+                    return BadRequest(new {
+                        message =
+                            "상태는 UNCHECKED, NOT_RECOVERED, RECOVERED만 사용할 수 있습니다."
+                    });
+                }
+            }
+
+            // 장비 코드 또는 알림 내용 검색
+            if (!string.IsNullOrWhiteSpace(search)) {
+
+                string normalizedSearch =
+                    search.Trim();
+
+                query = query.Where(a =>
+                    a.AlertMessage.Contains(normalizedSearch)
+                    || (
+                        a.ComponentId != null
+                        && _context.SystemComponents
+                            .Any(c =>
+                                c.ComponentId == a.ComponentId
+                                && c.ComponentCode.Contains(normalizedSearch)
+                            )
+                    )
+                );
+            }
+
+            // 최신 ID 순
+            query = query
+                .OrderByDescending(a => a.AlertId);
+
+            int totalCount =
+                await query.CountAsync();
+
+            int totalPages =
+                (int)Math.Ceiling(
+                    (double)totalCount / pageSize
+                );
+
+            var rawAlerts = await query
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
                 .Select(a => new {
                     alertId = a.AlertId,
                     sessionId = a.SessionId,
                     componentId = a.ComponentId,
+
+                    componentCode =
+                        a.ComponentId == null
+                            ? null
+                            : _context.SystemComponents
+                                .Where(c =>
+                                    c.ComponentId == a.ComponentId
+                                )
+                                .Select(c =>
+                                    c.ComponentCode
+                                )
+                                .FirstOrDefault(),
+
                     productDetectionId = a.ProductDetectionId,
                     checkedByUserId = a.CheckedByUserId,
                     alertType = a.AlertType,
@@ -49,7 +144,170 @@ namespace SmartSortingServer.Controllers {
                 })
                 .ToListAsync();
 
-            return Ok(alerts);
+            var alerts = rawAlerts.Select(a => new {
+                a.alertId,
+                a.sessionId,
+                a.componentId,
+                a.componentCode,
+                a.productDetectionId,
+                a.checkedByUserId,
+                a.alertType,
+                a.priority,
+                a.errorCode,
+                a.recoveryStatus,
+                a.checkStatus,
+                a.alertMessage,
+
+                createdAt =
+                    ToKstDateTimeOffset(a.createdAt),
+
+                recoveredAt =
+                    ToKstDateTimeOffset(a.recoveredAt),
+
+                checkedAt =
+                    ToKstDateTimeOffset(a.checkedAt)
+            });
+
+            return Ok(new {
+                items = alerts,
+                page,
+                pageSize,
+                totalCount,
+                totalPages
+            });
+        }
+
+        // 알림 요약 통계 조회
+        [HttpGet("summary")]
+        public async Task<IActionResult> GetAlertSummary() {
+
+            DateTime today = DateTime.Today;
+            DateTime tomorrow = today.AddDays(1);
+
+            // 오늘 발생한 전체 알림
+            int todayCount =
+                await _context.Alerts
+                    .AsNoTracking()
+                    .CountAsync(a =>
+                        a.CreatedAt >= today
+                        && a.CreatedAt < tomorrow
+                    );
+
+            // 날짜와 관계없이 아직 확인하지 않은 알림
+            int uncheckedCount =
+                await _context.Alerts
+                    .AsNoTracking()
+                    .CountAsync(a =>
+                        a.CheckStatus == "UNCHECKED"
+                    );
+
+            // 날짜와 관계없이 아직 복구되지 않은 알림
+            int notRecoveredCount =
+                await _context.Alerts
+                    .AsNoTracking()
+                    .CountAsync(a =>
+                        a.RecoveryStatus == "NOT_RECOVERED"
+                    );
+
+            return Ok(new {
+                todayCount,
+                uncheckedCount,
+                notRecoveredCount
+            });
+        }
+
+        // 알림 상세 조회
+        [HttpGet("{alertId:long}")]
+        public async Task<IActionResult> GetAlertDetail(long alertId) {
+
+            var alert =
+                await _context.Alerts
+                    .AsNoTracking()
+                    .Where(a =>
+                        a.AlertId == alertId
+                    )
+                    .Select(a => new {
+                        alertId =
+                            a.AlertId,
+
+                        sessionId =
+                            a.SessionId,
+
+                        productDetectionId =
+                            a.ProductDetectionId,
+
+                        checkedByUserId =
+                            a.CheckedByUserId,
+
+                        alertType =
+                            a.AlertType,
+
+                        priority =
+                            a.Priority,
+
+                        errorCode =
+                            a.ErrorCode,
+
+                        recoveryStatus =
+                            a.RecoveryStatus,
+
+                        checkStatus =
+                            a.CheckStatus,
+
+                        alertMessage =
+                            a.AlertMessage,
+
+                        componentCode =
+                            a.ComponentId == null
+                                ? null
+                                : _context.SystemComponents
+                                    .Where(c =>
+                                        c.ComponentId == a.ComponentId
+                                    )
+                                    .Select(c =>
+                                        c.ComponentCode
+                                    )
+                                    .FirstOrDefault(),
+
+                        createdAt =
+                            a.CreatedAt,
+
+                        recoveredAt =
+                            a.RecoveredAt,
+
+                        checkedAt =
+                            a.CheckedAt
+                    })
+                    .FirstOrDefaultAsync();
+
+            if (alert == null) {
+                return NotFound(new {
+                    message = "알림을 찾을 수 없습니다."
+                });
+            }
+
+            return Ok(new {
+                alert.alertId,
+                alert.sessionId,
+                alert.productDetectionId,
+                alert.checkedByUserId,
+                alert.alertType,
+                alert.priority,
+                alert.errorCode,
+                alert.recoveryStatus,
+                alert.checkStatus,
+                alert.alertMessage,
+                alert.componentCode,
+
+                createdAt =
+                    ToKstDateTimeOffset(alert.createdAt),
+
+                recoveredAt =
+                    ToKstDateTimeOffset(alert.recoveredAt),
+
+                checkedAt =
+                    ToKstDateTimeOffset(alert.checkedAt)
+            });
         }
 
         // 알림 생성
@@ -286,7 +544,10 @@ namespace SmartSortingServer.Controllers {
                 priority = alert.Priority,
                 shortMessage = request.ShortMessage,
                 alertMessage = alert.AlertMessage,
-                createdAt = alert.CreatedAt
+                createdAt =
+                    ToKstDateTimeOffset(
+                        alert.CreatedAt
+                    )
             });
         }
 
@@ -352,7 +613,10 @@ namespace SmartSortingServer.Controllers {
                 alertId = alert.AlertId,
                 checkStatus = alert.CheckStatus,
                 checkedByUserId = alert.CheckedByUserId,
-                checkedAt = alert.CheckedAt
+                checkedAt =
+                    ToKstDateTimeOffset(
+                        alert.CheckedAt
+                    )
             });
         }
 
@@ -486,8 +750,40 @@ namespace SmartSortingServer.Controllers {
                 message = "알림이 복구 처리되었습니다.",
                 alertId = alert.AlertId,
                 recoveryStatus = alert.RecoveryStatus,
-                recoveredAt = alert.RecoveredAt
+                recoveredAt =
+                    ToKstDateTimeOffset(
+                        alert.RecoveredAt
+                    )
             });
+        }
+
+        // KST(+09:00) 시간으로 변환
+        private static DateTimeOffset ToKstDateTimeOffset(
+            DateTime dateTime) {
+
+            DateTime unspecifiedDateTime =
+                DateTime.SpecifyKind(
+                    dateTime,
+                    DateTimeKind.Unspecified
+                );
+
+            return new DateTimeOffset(
+                unspecifiedDateTime,
+                TimeSpan.FromHours(9)
+            );
+        }
+
+        // KST(+09:00) nullable 시간으로 변환
+        private static DateTimeOffset? ToKstDateTimeOffset(
+            DateTime? dateTime) {
+
+            if (dateTime == null) {
+                return null;
+            }
+
+            return ToKstDateTimeOffset(
+                dateTime.Value
+            );
         }
     }
 }
