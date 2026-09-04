@@ -45,8 +45,10 @@ namespace SmartSortingServer.Services {
 
             // MQTT 연결 성공 이벤트
             _mqttClient.ConnectedAsync += async e => {
-                Console.WriteLine();
-                Console.WriteLine("MQTT Broker 연결 성공");
+
+                _logger.LogInformation(
+                    "\n[MQTT] Broker 연결 성공"
+                );
 
                 // 제품 감지 토픽 구독
                 var topicFilter =
@@ -88,17 +90,15 @@ namespace SmartSortingServer.Services {
                     stoppingToken
                 );
 
-                Console.WriteLine(
-                    "MQTT Topic 구독 완료: " +
+                _logger.LogInformation(
+                    "[MQTT] Subscribe - Topic: {Topic}",
                     "smart_sorting/camera/product_detection"
                 );
 
-                Console.WriteLine(
-                    "MQTT Topic 구독 완료: " +
-                    "smart_sorting/component/status/update"
+                _logger.LogInformation(
+                    "[MQTT] Subscribe - Topic: {Topic}",
+                    "smart_sorting/component/status/update\n"
                 );
-
-                Console.WriteLine();
             };
 
 

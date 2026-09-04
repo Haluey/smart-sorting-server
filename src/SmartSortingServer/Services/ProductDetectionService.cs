@@ -233,7 +233,7 @@ namespace SmartSortingServer.Services {
 
             if (request.ClassificationStatus == "FAILED") {
 
-                _logger.LogError(
+                _logger.LogWarning(
                     "[DETECTION] 제품 분류 실패 - DetectionId: {DetectionId}",
                     productDetection.ProductDetectionId
                 );

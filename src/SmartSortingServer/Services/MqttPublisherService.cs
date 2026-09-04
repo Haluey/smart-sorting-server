@@ -29,34 +29,53 @@ namespace SmartSortingServer.Services {
         public async Task PublishAsync(
             string topic,
             object payload) {
-            // MQTT Broker와 연결되어 있지 않으면 연결
-            if (!_mqttClient.IsConnected) {
-                await _mqttClient.ConnectAsync(
-                    _mqttClientOptions,
+
+            try {
+
+                // MQTT Broker와 연결되어 있지 않으면 연결
+                if (!_mqttClient.IsConnected) {
+
+                    await _mqttClient.ConnectAsync(
+                        _mqttClientOptions,
+                        CancellationToken.None
+                    );
+
+                    _logger.LogInformation(
+                        "[MQTT] Publisher Broker 연결 성공"
+                    );
+                }
+
+                // 객체를 JSON 문자열로 변환
+                var json = JsonSerializer.Serialize(payload);
+
+                // MQTT 메시지 생성
+                var message = new MqttApplicationMessageBuilder()
+                    .WithTopic(topic)
+                    .WithPayload(json)
+                    .Build();
+
+                // MQTT Publish
+                await _mqttClient.PublishAsync(
+                    message,
                     CancellationToken.None
                 );
+
+                _logger.LogInformation(
+                    "[MQTT] Publish - Topic: {Topic}",
+                    topic
+                );
             }
+            catch (Exception ex) {
 
-            // 객체를 JSON 문자열로 변환
-            var json = JsonSerializer.Serialize(payload);
+                _logger.LogError(
+                    "[MQTT] Publish 실패 - Topic: {Topic}, Message: {Message}",
+                    topic,
+                    ex.Message
+                );
 
-            // MQTT 메시지 생성
-            var message = new MqttApplicationMessageBuilder()
-                .WithTopic(topic)
-                .WithPayload(json)
-                .Build();
-
-            // MQTT Publish
-            await _mqttClient.PublishAsync(
-                message,
-                CancellationToken.None
-            );
-
-            // MQTT Publish 로그
-            _logger.LogInformation(
-                "[MQTT] Publish - Topic: {Topic}",
-                topic
-            );
+                throw;
+            }
         }
+
     }
 }

@@ -7,11 +7,14 @@ namespace SmartSortingServer.Controllers {
     public class ProductImagesController : ControllerBase {
 
         private readonly IWebHostEnvironment _environment;
+        private readonly ILogger<ProductImagesController> _logger;
 
         public ProductImagesController(
-            IWebHostEnvironment environment) {
+            IWebHostEnvironment environment,
+            ILogger<ProductImagesController> logger) {
 
             _environment = environment;
+            _logger = logger;
         }
 
         [HttpPost]
@@ -35,6 +38,12 @@ namespace SmartSortingServer.Controllers {
             };
 
             if (!allowedExtensions.Contains(extension)) {
+
+                _logger.LogWarning(
+                    "[IMAGE] 이미지 업로드 거부 - FileName: {FileName}, Reason: 허용되지 않은 확장자",
+                    image.FileName
+                );
+
                 return BadRequest(new {
                     message =
                         "JPG, JPEG, PNG 이미지 파일만 업로드할 수 있습니다."
@@ -45,6 +54,13 @@ namespace SmartSortingServer.Controllers {
                 5 * 1024 * 1024;
 
             if (image.Length > maxFileSize) {
+
+                _logger.LogWarning(
+                    "[IMAGE] 이미지 업로드 거부 - FileName: {FileName}, Size: {Size}, Reason: 5MB 초과",
+                    image.FileName,
+                    image.Length
+                );
+
                 return BadRequest(new {
                     message =
                         "이미지 크기는 5MB를 초과할 수 없습니다."
@@ -79,6 +95,12 @@ namespace SmartSortingServer.Controllers {
 
             string imagePath =
                 $"/images/products/{fileName}";
+
+            _logger.LogInformation(
+                "[IMAGE] 이미지 업로드 완료 - FileName: {FileName}, Size: {Size}",
+                fileName,
+                image.Length
+            );
 
             return Ok(new {
                 imagePath
