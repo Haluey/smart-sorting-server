@@ -441,3 +441,4 @@ secrets.json
 # 업로드 이미지 및 로그
 uploads/
 logs/
+src/SmartSortingServer/wwwroot/images/products/

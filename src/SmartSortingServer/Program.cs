@@ -107,6 +107,9 @@ namespace SmartSortingServer {
                 app.UseHttpsRedirection();
             }
 
+            // wwwroot 정적 파일 제공
+            app.UseStaticFiles();
+
             // CORS 처리
             app.UseCors("AllowAdminWeb");
 

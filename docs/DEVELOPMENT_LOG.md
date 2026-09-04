@@ -2277,6 +2277,275 @@ PATCH /api/alerts/{alertId}/recover
 
 ---
 
+## 2026-09-03 — 제품 이미지 업로드 및 관리자 Web 이미지 연동 구현
+
+### 관리자 Web MQTT 실시간 연동 확인
+
+- 관리자 Web에서 서버가 Publish하는 MQTT Topic을 이용한 실시간 화면 갱신이 정상 동작하는 것을 확인했습니다.
+- 다음 Topic의 Web 수신 구조를 기준으로 실시간 연동 상태를 확인했습니다.
+
+```text
+smart_sorting/product/detection
+→ 신규 제품 감지 결과 실시간 반영
+
+smart_sorting/alert
+→ 신규 INFO / WARNING / ERROR 알림 목록 실시간 반영
+
+smart_sorting/component/status
+→ 시스템 구성요소 현재 상태 실시간 반영
+```
+
+- 알림 상세 화면은 기존 결정대로 MQTT를 사용하지 않고 REST API를 이용하도록 유지했습니다.
+- 관리자 Web의 REST API 조회 기능과 MQTT 실시간 이벤트 처리 역할을 분리한 기존 구조를 유지했습니다.
+
+### 제품 이미지 전달 방식 확정
+
+- Raspberry Pi에서 촬영한 제품 이미지 자체를 MQTT Payload에 포함하지 않고 HTTP로 서버에 업로드하는 방식으로 정리했습니다.
+- MQTT에는 Raspberry Pi의 로컬 이미지 경로가 아닌 서버가 반환한 `imagePath`만 전달하도록 기준을 확정했습니다.
+
+```text
+Raspberry Pi
+        ↓
+제품 이미지 촬영 및 로컬 저장
+        ↓
+HTTP 이미지 업로드
+        ↓
+ASP.NET Core Server
+        ↓
+서버 이미지 경로 반환
+        ↓
+제품 감지 MQTT Payload의 imagePath에 사용
+```
+
+- 기존 Raspberry Pi 로컬 경로는 관리자 Web에서 직접 접근할 수 없으므로 MQTT 저장 경로로 사용하지 않도록 정리했습니다.
+
+```text
+사용하지 않음
+/home/rpi/smart_sorting/images/photo_001.jpg
+
+사용
+/images/products/서버파일명.jpg
+```
+
+### 제품 이미지 저장 디렉터리 구성
+
+- ASP.NET Core 프로젝트에 제품 이미지 저장용 정적 파일 디렉터리를 추가했습니다.
+
+```text
+wwwroot/
+└─ images/
+   └─ products/
+```
+
+- 서버에 업로드된 제품 이미지는 `wwwroot/images/products` 아래에 저장하도록 구성했습니다.
+- 이미지 파일은 DB에 Binary 데이터로 저장하지 않고 실제 파일은 서버 디스크에 저장하며, DB에는 이미지 상대 경로만 저장하는 기존 구조를 유지했습니다.
+
+### ASP.NET Core 정적 파일 제공 설정
+
+- 관리자 Web에서 저장된 제품 이미지에 HTTP로 접근할 수 있도록 `Program.cs`에 정적 파일 제공 Middleware를 추가했습니다.
+
+```csharp
+app.UseStaticFiles();
+```
+
+- 기존 Middleware 순서를 유지하면서 `UseCors` 이전에 정적 파일 제공 설정을 배치했습니다.
+
+```text
+UseHttpsRedirection
+        ↓
+UseStaticFiles
+        ↓
+UseCors
+        ↓
+UseAuthentication
+        ↓
+UseAuthorization
+        ↓
+MapControllers
+```
+
+- 이를 통해 서버에 저장된 제품 이미지를 다음 형식으로 직접 조회할 수 있도록 구성했습니다.
+
+```text
+http://서버IP:포트/images/products/파일명.jpg
+```
+
+### 제품 이미지 업로드 API 구현
+
+- Raspberry Pi 제어부가 촬영한 이미지를 서버로 전송할 수 있도록 `ProductImagesController`를 추가했습니다.
+
+```text
+POST /api/product-images
+```
+
+- 요청은 `multipart/form-data` 형식을 사용하며 파일 Key는 `image`로 통일했습니다.
+
+```text
+Content-Type: multipart/form-data
+Key: image
+```
+
+- 다음 이미지 확장자만 업로드할 수 있도록 검증을 추가했습니다.
+
+```text
+.jpg
+.jpeg
+.png
+```
+
+- 이미지 최대 업로드 크기를 `5MB`로 제한했습니다.
+- 빈 파일 또는 이미지가 전달되지 않은 경우 `400 Bad Request`를 반환하도록 처리했습니다.
+- 허용되지 않은 확장자 또는 최대 크기를 초과한 파일도 `400 Bad Request`로 처리하도록 구성했습니다.
+
+### 서버 이미지 파일명 생성 및 저장
+
+- Raspberry Pi에서 전달한 원본 파일명을 그대로 사용하지 않고 서버에서 고유한 파일명을 새로 생성하도록 구현했습니다.
+- 날짜·시간과 GUID를 조합하여 동일 파일명 충돌을 방지하도록 구성했습니다.
+
+```text
+yyyyMMdd_HHmmss_GUID.jpg
+```
+
+- 서버는 이미지를 저장한 뒤 관리자 Web에서 사용할 수 있는 상대 경로를 반환하도록 구현했습니다.
+
+```json
+{
+  "imagePath": "/images/products/20260903_155000_xxxxx.jpg"
+}
+```
+
+### 이미지 업로드 API 동작 테스트
+
+- Postman의 `form-data` 요청을 이용하여 실제 이미지 파일 업로드 테스트를 진행했습니다.
+- 이미지 업로드 요청이 정상 처리되고 `200 OK` 응답과 `imagePath`가 반환되는 것을 확인했습니다.
+- 업로드한 이미지 파일이 실제 `wwwroot/images/products` 디렉터리에 저장되는 것을 확인했습니다.
+- 서버가 반환한 `imagePath`를 서버 Base URL과 결합하여 브라우저에서 직접 접근할 수 있는 것을 확인했습니다.
+
+```text
+http://서버IP:5051/images/products/파일명.jpg
+```
+
+### 제품 감지 MQTT와 이미지 경로 연동
+
+- 이미지 업로드 API가 반환한 `imagePath`를 기존 제품 감지 MQTT Payload의 `imagePath` 필드에 사용하도록 연동 기준을 확정했습니다.
+
+```json
+{
+  "classificationStatus": "SUCCESS",
+  "productTypeCode": "CHOCOLATE",
+  "confidence": 0.91,
+  "imagePath": "/images/products/20260903_155000_xxxxx.jpg"
+}
+```
+
+사용 Topic:
+
+```text
+smart_sorting/camera/product_detection
+```
+
+- 제품 감지 결과는 기존 `ProductDetectionService` 처리 구조를 그대로 사용하도록 유지했습니다.
+
+```text
+smart_sorting/camera/product_detection
+        ↓
+ProductDetectionService
+        ↓
+product_detections.image_path 저장
+        ↓
+smart_sorting/product/detection Publish
+        ↓
+관리자 Web
+```
+
+### 제품 이미지 전체 흐름 테스트
+
+- Postman으로 서버에 이미지를 업로드하고 반환된 `imagePath`를 제품 감지 MQTT 메시지에 포함하여 전체 흐름을 테스트했습니다.
+- 제품 감지 결과의 `imagePath`가 `product_detections`에 저장되는 것을 확인했습니다.
+- 서버가 Web용 `smart_sorting/product/detection` Topic으로 동일한 이미지 경로를 전달하는 구조를 확인했습니다.
+- 관리자 Web에서 실제 업로드된 제품 이미지가 정상 표시되는 것을 확인했습니다.
+
+```text
+이미지 업로드
+        ↓
+서버 파일 저장
+        ↓
+imagePath 반환
+        ↓
+camera/product_detection
+        ↓
+DB 저장
+        ↓
+product/detection Publish
+        ↓
+관리자 Web 실제 이미지 표시
+```
+
+### 제어부 이미지 업로드 연동 기준 정리
+
+- Raspberry Pi 제어부에서 Python `requests`를 이용해 이미지 업로드 API를 호출하는 기준을 정리했습니다.
+
+```python
+with open(local_image_path, "rb") as image_file:
+    response = requests.post(
+        f"{SERVER_URL}/api/product-images",
+        files={
+            "image": image_file
+        }
+    )
+
+response.raise_for_status()
+
+server_image_path = response.json()["imagePath"]
+```
+
+- 서버에서 반환한 `imagePath`를 기존 MQTT 제품 감지 Payload에 포함하도록 제어부 처리 순서를 정리했습니다.
+
+```text
+1. 제품 이미지 촬영
+2. Raspberry Pi 로컬 이미지 저장
+3. POST /api/product-images 호출
+4. imagePath 응답 수신
+5. 제품 감지 MQTT Payload에 imagePath 설정
+6. smart_sorting/camera/product_detection Publish
+```
+
+- 제어부 전달용 `CONTROL_IMAGE_UPLOAD_GUIDE.md` 문서를 별도로 작성했습니다.
+
+### 서버 Base URL 및 외부 접근 기준 확인
+
+- 현재 `launchSettings.json`의 HTTP 서버 Listen 주소를 확인했습니다.
+
+```text
+http://0.0.0.0:5051
+```
+
+- 서버 PC 내부 테스트에서는 다음 Base URL을 사용할 수 있습니다.
+
+```text
+http://localhost:5051
+```
+
+- Raspberry Pi 또는 다른 PC에서 접근할 때는 서버 PC의 실제 IPv4 주소를 사용하도록 정리했습니다.
+
+```text
+http://서버PC_IP:5051
+```
+
+이미지 업로드 API 예시:
+
+```text
+http://서버PC_IP:5051/api/product-images
+```
+
+제품 이미지 조회 예시:
+
+```text
+http://서버PC_IP:5051/images/products/파일명.jpg
+```
+
+---
+
 ## 현재 완료 상태
 
 - [x] 데이터베이스 생성 스크립트
