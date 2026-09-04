@@ -19,9 +19,14 @@ namespace SmartSortingServer.Controllers {
 
         [HttpPost]
         public async Task<IActionResult> UploadImage(
-            IFormFile image) {
+            IFormFile? image) {
 
             if (image == null || image.Length == 0) {
+
+                _logger.LogWarning(
+                    "[IMAGE] 이미지 업로드 거부 - Reason: 이미지 파일 없음"
+                );
+
                 return BadRequest(new {
                     message = "이미지 파일이 필요합니다."
                 });
@@ -77,21 +82,38 @@ namespace SmartSortingServer.Controllers {
                     "products"
                 );
 
-            Directory.CreateDirectory(directoryPath);
-
             string filePath =
                 Path.Combine(
                     directoryPath,
                     fileName
                 );
 
-            await using FileStream stream =
-                new FileStream(
-                    filePath,
-                    FileMode.Create
+            try {
+                Directory.CreateDirectory(directoryPath);
+
+                await using FileStream stream =
+                    new FileStream(
+                        filePath,
+                        FileMode.Create
+                    );
+
+                await image.CopyToAsync(stream);
+            }
+            catch (Exception ex) {
+
+                _logger.LogError(
+                    "[IMAGE] 이미지 저장 실패 - FileName: {FileName}, Message: {Message}",
+                    fileName,
+                    ex.Message
                 );
 
-            await image.CopyToAsync(stream);
+                return StatusCode(
+                    StatusCodes.Status500InternalServerError,
+                    new {
+                        message = "이미지 저장 중 오류가 발생했습니다."
+                    }
+                );
+            }
 
             string imagePath =
                 $"/images/products/{fileName}";

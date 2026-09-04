@@ -129,6 +129,12 @@ namespace SmartSortingServer.Controllers {
             if (request.TargetChocolateSetCount <= 0 ||
                 request.TargetCandySetCount <= 0) {
 
+                _logger.LogWarning(
+                    "[TARGET] 생산 목표 설정 거부 - Reason: 목표 생산량 1 미만, ChocolateSet: {ChocolateSet}, CandySet: {CandySet}",
+                    request.TargetChocolateSetCount,
+                    request.TargetCandySetCount
+                );
+
                 return BadRequest(new {
                     message = "목표 생산량은 1 이상이어야 합니다."
                 });
@@ -138,6 +144,11 @@ namespace SmartSortingServer.Controllers {
                 .FirstOrDefaultAsync(t => t.TargetId == 1);
 
             if (target == null) {
+
+                _logger.LogError(
+                    "[TARGET] 생산 목표 설정 실패 - Reason: 생산 목표 정보 없음"
+                );
+
                 return NotFound(new {
                     message = "생산 목표가 설정되어 있지 않습니다."
                 });
@@ -165,6 +176,13 @@ namespace SmartSortingServer.Controllers {
                 if (request.TargetChocolateSetCount < nextWorkerCount ||
                     request.TargetCandySetCount < nextWorkerCount) {
 
+                    _logger.LogWarning(
+                        "[TARGET] 다음 생산 목표 설정 거부 - Reason: 목표가 작업 인원보다 작음, ChocolateSet: {ChocolateSet}, CandySet: {CandySet}, WorkerCount: {WorkerCount}",
+                        request.TargetChocolateSetCount,
+                        request.TargetCandySetCount,
+                        nextWorkerCount
+                    );
+
                     return BadRequest(new {
                         message =
                             $"다음 생산 목표는 예약 작업 인원({nextWorkerCount}명) 이상이어야 합니다."
@@ -176,6 +194,13 @@ namespace SmartSortingServer.Controllers {
                 // 현재 작업 인원을 기준으로 현재 목표 검사
                 if (request.TargetChocolateSetCount < target.DailyWorkerCount ||
                     request.TargetCandySetCount < target.DailyWorkerCount) {
+
+                    _logger.LogWarning(
+                        "[TARGET] 생산 목표 설정 거부 - Reason: 목표가 작업 인원보다 작음, ChocolateSet: {ChocolateSet}, CandySet: {CandySet}, WorkerCount: {WorkerCount}",
+                        request.TargetChocolateSetCount,
+                        request.TargetCandySetCount,
+                        target.DailyWorkerCount
+                    );
 
                     return BadRequest(new {
                         message =
@@ -272,6 +297,12 @@ namespace SmartSortingServer.Controllers {
             [FromBody] UpdateDailyWorkerCountRequest request
         ) {
             if (request.DailyWorkerCount <= 0) {
+
+                _logger.LogWarning(
+                    "[TARGET] 작업 인원 설정 거부 - Reason: 작업 인원 1명 미만, DailyWorkerCount: {DailyWorkerCount}",
+                    request.DailyWorkerCount
+                );
+
                 return BadRequest(new {
                     message = "작업 인원 수는 1명 이상이어야 합니다."
                 });
@@ -281,6 +312,11 @@ namespace SmartSortingServer.Controllers {
                 .FirstOrDefaultAsync(t => t.TargetId == 1);
 
             if (target == null) {
+
+                _logger.LogError(
+                    "[TARGET] 작업 인원 설정 실패 - Reason: 생산 목표 정보 없음"
+                );
+
                 return NotFound(new {
                     message = "생산 목표 정보가 없습니다."
                 });
@@ -315,6 +351,13 @@ namespace SmartSortingServer.Controllers {
 
                 if (request.DailyWorkerCount > nextChocolateTarget ||
                     request.DailyWorkerCount > nextCandyTarget) {
+
+                    _logger.LogWarning(
+                        "[TARGET] 다음 작업 인원 설정 거부 - Reason: 작업 인원이 다음 생산 목표보다 많음, DailyWorkerCount: {DailyWorkerCount}, ChocolateSet: {ChocolateSet}, CandySet: {CandySet}",
+                        request.DailyWorkerCount,
+                        nextChocolateTarget,
+                        nextCandyTarget
+                    );
 
                     return BadRequest(new {
                         message =
@@ -355,6 +398,13 @@ namespace SmartSortingServer.Controllers {
              */
             if (request.DailyWorkerCount > target.TargetChocolateSetCount ||
                 request.DailyWorkerCount > target.TargetCandySetCount) {
+
+                _logger.LogWarning(
+                    "[TARGET] 작업 인원 설정 거부 - Reason: 작업 인원이 생산 목표보다 많음, DailyWorkerCount: {DailyWorkerCount}, ChocolateSet: {ChocolateSet}, CandySet: {CandySet}",
+                    request.DailyWorkerCount,
+                    target.TargetChocolateSetCount,
+                    target.TargetCandySetCount
+                );
 
                 return BadRequest(new {
                     message =

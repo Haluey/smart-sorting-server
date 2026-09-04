@@ -49,6 +49,12 @@ namespace SmartSortingServer.Controllers {
                 .FirstOrDefaultAsync();
 
             if (runningSession != null) {
+
+                _logger.LogWarning(
+                    "[SESSION] 생산 작업 시작 거부 - Reason: 진행 중인 세션 존재, SessionId: {SessionId}",
+                    runningSession.SessionId
+                );
+
                 return BadRequest(new {
                     message = "이미 진행 중인 생산 작업이 있습니다."
                 });
@@ -59,6 +65,11 @@ namespace SmartSortingServer.Controllers {
                 .FirstOrDefaultAsync(t => t.TargetId == 1);
 
             if (target == null) {
+
+                _logger.LogWarning(
+                    "[SESSION] 생산 작업 시작 거부 - Reason: 생산 목표 없음"
+                );
+
                 return BadRequest(new {
                     message = "생산 목표가 설정되어 있지 않습니다."
                 });
@@ -133,6 +144,13 @@ namespace SmartSortingServer.Controllers {
             if (target.TargetChocolateSetCount < target.DailyWorkerCount ||
                 target.TargetCandySetCount < target.DailyWorkerCount) {
 
+                _logger.LogWarning(
+                    "[SESSION] 생산 작업 시작 거부 - Reason: 생산 목표가 작업 인원보다 작음, ChocolateSet: {ChocolateSet}, CandySet: {CandySet}, DailyWorkerCount: {DailyWorkerCount}",
+                    target.TargetChocolateSetCount,
+                    target.TargetCandySetCount,
+                    target.DailyWorkerCount
+                );
+
                 return BadRequest(new {
                     message = $"하루 생산 목표는 작업 인원({target.DailyWorkerCount}명) 이상이어야 합니다."
                 });
@@ -140,6 +158,13 @@ namespace SmartSortingServer.Controllers {
 
             // 하루 최대 생산 세션 수 확인
             if (todaySessionCount >= target.DailyWorkerCount) {
+
+                _logger.LogWarning(
+                    "[SESSION] 생산 작업 시작 거부 - Reason: 오늘 생성 가능한 세션 수 초과, TodaySessionCount: {TodaySessionCount}, DailyWorkerCount: {DailyWorkerCount}",
+                    todaySessionCount,
+                    target.DailyWorkerCount
+                );
+
                 return BadRequest(new {
                     message = "오늘 생성 가능한 생산 세션이 모두 사용되었습니다."
                 });
@@ -183,6 +208,13 @@ namespace SmartSortingServer.Controllers {
                 );
 
             if (chocolateType == null || candyType == null) {
+
+                _logger.LogError(
+                    "[SESSION] 제품 유형 정보 조회 실패 - ChocolateExists: {ChocolateExists}, CandyExists: {CandyExists}",
+                    chocolateType != null,
+                    candyType != null
+                );
+
                 return BadRequest(new {
                     message = "제품 유형 정보를 찾을 수 없습니다."
                 });
@@ -343,6 +375,11 @@ namespace SmartSortingServer.Controllers {
                     .FirstOrDefaultAsync();
 
             if (productionSession == null) {
+
+                _logger.LogWarning(
+                    "[SESSION] 생산 작업 종료 거부 - Reason: 진행 중인 세션 없음"
+                );
+
                 return NotFound(new {
                     message = "진행 중인 생산 작업이 없습니다."
                 });
@@ -360,6 +397,13 @@ namespace SmartSortingServer.Controllers {
                 );
 
             if (chocolateType == null || candyType == null) {
+
+                _logger.LogError(
+                    "[SESSION] 제품 유형 정보 조회 실패 - ChocolateExists: {ChocolateExists}, CandyExists: {CandyExists}",
+                    chocolateType != null,
+                    candyType != null
+                );
+
                 return BadRequest(new {
                     message = "제품 유형 정보를 찾을 수 없습니다."
                 });

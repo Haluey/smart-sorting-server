@@ -575,6 +575,12 @@ namespace SmartSortingServer.Controllers {
                 );
 
             if (alert == null) {
+
+                _logger.LogWarning(
+                   "[ALERT] 알림 확인 실패 - AlertId: {AlertId}, Reason: 알림 없음",
+                   alertId
+               );
+
                 return NotFound(new {
                     message = "알림을 찾을 수 없습니다."
                 });
@@ -582,6 +588,12 @@ namespace SmartSortingServer.Controllers {
 
             // INFO 알림은 확인 처리 대상이 아님
             if (alert.AlertType == "INFO") {
+
+                _logger.LogWarning(
+                    "[ALERT] 알림 확인 거부 - AlertId: {AlertId}, Reason: INFO 알림",
+                    alert.AlertId
+                );
+
                 return BadRequest(new {
                     message = "INFO 알림은 확인 처리 대상이 아닙니다."
                 });
@@ -589,6 +601,12 @@ namespace SmartSortingServer.Controllers {
 
             // 이미 확인된 알림
             if (alert.CheckStatus == "CHECKED") {
+
+                _logger.LogWarning(
+                    "[ALERT] 알림 확인 거부 - AlertId: {AlertId}, Reason: 이미 확인됨",
+                    alert.AlertId
+                );
+
                 return Conflict(new {
                     message = "이미 확인된 알림입니다."
                 });
@@ -631,6 +649,12 @@ namespace SmartSortingServer.Controllers {
                 );
 
             if (alert == null) {
+
+                _logger.LogWarning(
+                    "[ALERT] 알림 복구 실패 - AlertId: {AlertId}, Reason: 알림 없음",
+                    alertId
+                );
+
                 return NotFound(new {
                     message = "알림을 찾을 수 없습니다."
                 });
@@ -638,6 +662,12 @@ namespace SmartSortingServer.Controllers {
 
             // INFO 알림은 복구 처리 대상이 아님
             if (alert.AlertType == "INFO") {
+
+                _logger.LogWarning(
+                    "[ALERT] 알림 복구 거부 - AlertId: {AlertId}, Reason: INFO 알림",
+                    alert.AlertId
+                );
+
                 return BadRequest(new {
                     message = "INFO 알림은 복구 처리 대상이 아닙니다."
                 });
@@ -645,6 +675,12 @@ namespace SmartSortingServer.Controllers {
 
             // 이미 복구된 알림
             if (alert.RecoveryStatus == "RECOVERED") {
+
+                _logger.LogWarning(
+                    "[ALERT] 알림 복구 거부 - AlertId: {AlertId}, Reason: 이미 복구됨",
+                    alert.AlertId
+                );
+
                 return Conflict(new {
                     message = "이미 복구된 알림입니다."
                 });

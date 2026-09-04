@@ -35,6 +35,12 @@ namespace SmartSortingServer.Controllers {
 
             // 사용자가 존재하지 않는 경우
             if (user == null) {
+
+                _logger.LogWarning(
+                    "[LOGIN] 로그인 실패 - LoginId: {LoginId}, Reason: 사용자 없음",
+                    request.LoginId
+                );
+
                 return Unauthorized(new {
                     message = "아이디 또는 비밀번호가 올바르지 않습니다."
                 });
@@ -48,6 +54,12 @@ namespace SmartSortingServer.Controllers {
 
             // 비밀번호가 일치하지 않는 경우
             if (!isPasswordValid) {
+
+                _logger.LogWarning(
+                    "[LOGIN] 로그인 실패 - LoginId: {LoginId}, Reason: 비밀번호 불일치",
+                    request.LoginId
+                );
+
                 return Unauthorized(new {
                     message = "아이디 또는 비밀번호가 올바르지 않습니다."
                 });

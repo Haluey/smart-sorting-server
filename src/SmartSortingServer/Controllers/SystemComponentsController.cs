@@ -60,6 +60,13 @@ namespace SmartSortingServer.Controllers {
             };
 
             if (!allowedStatuses.Contains(status)) {
+
+                _logger.LogWarning(
+                    "[COMPONENT] 상태 변경 거부 - Component: {ComponentCode}, Status: {Status}, Reason: 허용되지 않은 상태",
+                    componentCode,
+                    status
+                );
+
                 return BadRequest(new {
                     message =
                         "상태는 NORMAL, WARNING, ERROR, OFFLINE만 사용할 수 있습니다."
@@ -73,6 +80,12 @@ namespace SmartSortingServer.Controllers {
                 );
 
             if (component == null) {
+
+                _logger.LogWarning(
+                    "[COMPONENT] 상태 변경 실패 - Component: {ComponentCode}, Reason: 구성요소 없음",
+                    componentCode
+                );
+
                 return NotFound(new {
                     message =
                         "시스템 구성요소를 찾을 수 없습니다."

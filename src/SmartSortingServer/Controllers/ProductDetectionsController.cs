@@ -12,13 +12,16 @@ namespace SmartSortingServer.Controllers {
     public class ProductDetectionsController : ControllerBase {
         private readonly ProductDetectionService _productDetectionService;
         private readonly AppDbContext _context;
+        private readonly ILogger<ProductDetectionsController> _logger;
 
         public ProductDetectionsController(
             ProductDetectionService productDetectionService,
-            AppDbContext context) {
+            AppDbContext context,
+            ILogger<ProductDetectionsController> logger) {
 
             _productDetectionService = productDetectionService;
             _context = context;
+            _logger = logger;
         }
 
         // 제품 감지 결과 저장
@@ -52,11 +55,23 @@ namespace SmartSortingServer.Controllers {
                 });
             }
             catch (InvalidOperationException ex) {
+
+                _logger.LogWarning(
+                    "[DETECTION] 제품 감지 처리 실패 - Reason: {Message}",
+                    ex.Message
+                );
+
                 return NotFound(new {
                     message = ex.Message
                 });
             }
             catch (ArgumentException ex) {
+
+                _logger.LogWarning(
+                    "[DETECTION] 제품 감지 요청 거부 - Reason: {Message}",
+                    ex.Message
+                );
+
                 return BadRequest(new {
                     message = ex.Message
                 });
